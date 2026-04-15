@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <title>DFD - STRIDE Threat Model Demo</title>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgo=" />
+    <style>
+      div.mermaid {
+        font-family: 'Courier New', Courier, monospace !important;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1>DFD - STRIDE Threat Model Demos</h1>
+
+    <h2>Basic DFD</h2>
+    <pre class="mermaid">
+      dfd-beta
+        title Simple Web App
+        direction LR
+
+        external user "Web User"
+
+        boundary web_tier "Web Tier" {
+          process web "Web Server"
+          process api "API Service"
+        }
+
+        boundary data_tier "Data Tier" {
+          datastore db "User Database"
+        }
+
+        user -- "HTTP request" --> web
+        web -- "REST call" --> api
+        api -- "SQL query" --> db
+    </pre>
+
+    <hr />
+
+    <h2>DFD with Threats</h2>
+    <pre class="mermaid">
+      dfd-beta showThreats
+        title Payment System Threat Model
+
+        external customer "Customer"
+        external bank "Payment Gateway"
+
+        boundary app "Application" {
+          process gateway "API Gateway"
+          process auth "Auth Service"
+          process payments "Payment Processor"
+        }
+
+        boundary storage "Data Layer" {
+          datastore orders "Order Database"
+          datastore keys "Key Vault"
+        }
+
+        f1: customer -- "payment request" --> gateway
+        gateway -- "authenticate" --> auth
+        auth -- "fetch keys" --> keys
+        gateway -- "process payment" --> payments
+        payments -- "charge" --> bank
+        payments -- "store order" --> orders
+
+        threat customer S "Attacker impersonates customer" severity high status investigate
+        threat customer S "Session hijacking via stolen token" severity medium status new
+        threat gateway D "DDoS flooding API" severity high status mitigated
+        threat auth S "Brute force login" severity critical status new
+        threat f1 T "Man-in-the-middle attack" severity high status mitigated
+        threat orders I "Unauthorized data access" severity medium status new
+        threat payments E "Privilege escalation to admin" severity critical status investigate
+    </pre>
+
+    <hr />
+
+    <h2>Minimal DFD</h2>
+    <pre class="mermaid">
+      dfd-beta
+        external client "Mobile App"
+        process server "Backend"
+        datastore cache "Redis Cache"
+
+        client -- "API call" --> server
+        server -- "cache read" --> cache
+    </pre>
+
+    <hr />
+
+    <h2>Parallel Flows</h2>
+    <pre class="mermaid">
+      dfd-beta
+        title Parallel Flow Test
+        direction LR
+
+        external user "User"
+        process app "App Server"
+        datastore db "Database"
+
+        user -- "login" --> app
+        user -- "browse" --> app
+        user -- "search" --> app
+        app -- "read" --> db
+        app -- "write" --> db
+    </pre>
+
+    <script type="module">
+      import mermaid from '/mermaid.esm.mjs';
+      mermaid.initialize({
+        logLevel: 3,
+        securityLevel: 'loose',
+      });
+    </script>
+  </body>
+</html>

@@ -98,9 +98,6 @@ const populateDb = (ast: Dfd, db: DfdDB): void => {
       (threat.status as ThreatStatus) ?? undefined
     );
   }
-
-  // After all elements and flows are added, compute boundary crossings
-  db.computeBoundaryCrossings();
 };
 
 export const parser: ParserDefinition = {

@@ -62,7 +62,6 @@ const addFlow = (source: string, target: string, label: string, flowId?: string)
     source,
     target,
     label,
-    crossesBoundary: false, // computed later
   };
   flows.push(flow);
   log.debug(`Added flow: ${source} -> ${target} "${label}"`);
@@ -128,19 +127,6 @@ const addThreat = (
   log.debug(`Added threat #${number}: ${category} on ${targetId}`);
 };
 
-/** Compute boundary crossings for all flows. Call after all elements/boundaries are added. */
-const computeBoundaryCrossings = (): void => {
-  for (const flow of flows) {
-    const sourceEl = elements.get(flow.source);
-    const targetEl = elements.get(flow.target);
-    if (sourceEl && targetEl) {
-      const sourceBoundary = sourceEl.boundaryId ?? null;
-      const targetBoundary = targetEl.boundaryId ?? null;
-      flow.crossesBoundary = sourceBoundary !== targetBoundary;
-    }
-  }
-};
-
 const setDirection = (dir: DfdDirection): void => {
   direction = dir;
 };
@@ -176,7 +162,6 @@ export interface DfdDB {
     severity?: SeverityLevel,
     status?: ThreatStatus
   ) => void;
-  computeBoundaryCrossings: () => void;
 
   setDirection: (dir: DfdDirection) => void;
   setShowThreats: (toggle: boolean) => void;
@@ -202,7 +187,6 @@ export const db: DfdDB = {
   addFlow,
   addBoundary,
   addThreat,
-  computeBoundaryCrossings,
 
   setDirection,
   setShowThreats,

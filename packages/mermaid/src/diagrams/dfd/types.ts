@@ -17,7 +17,6 @@ export interface DfdDataFlow {
   source: string;
   target: string;
   label: string;
-  crossesBoundary: boolean;
 }
 
 export interface DfdTrustBoundary {

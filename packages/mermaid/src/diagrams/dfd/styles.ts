@@ -53,14 +53,7 @@ const getStyles: DiagramStylesProvider = () =>
     fill: #333333;
   }
 
-  /* Boundary-crossing flows */
-  .dfd-flow-crossing path {
-    stroke: #e74c3c;
-    stroke-width: 2.5px;
-  }
-  .dfd-flow-crossing marker path {
-    fill: #e74c3c;
-  }
+
 
   /* Trust Boundaries */
   .dfd-boundary rect {
