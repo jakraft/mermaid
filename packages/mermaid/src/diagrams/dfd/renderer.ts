@@ -73,11 +73,23 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
     }
   }
 
-  // Add element nodes
+  // Pre-compute element widths accounting for badges to the right of the label
+  const LABEL_CHAR_WIDTH = 8; // approximate width per character
+  const LABEL_PAD = 20; // padding around label text
+  const BADGE_LABEL_GAP = 8; // gap between label and first badge
+
+  // Add element nodes — width includes label + badges
   for (const [elId, el] of elements) {
+    const elementThreats = threats.filter((t) => t.targetId === elId);
+    const labelWidth = el.label.length * LABEL_CHAR_WIDTH;
+    const badgesWidth =
+      elementThreats.length > 0
+        ? BADGE_LABEL_GAP + elementThreats.length * (BADGE_SIZE + BADGE_GAP) - BADGE_GAP
+        : 0;
+    const nodeWidth = Math.max(ELEMENT_WIDTH, labelWidth + badgesWidth + LABEL_PAD);
     graph.setNode(elId, {
       label: el.label,
-      width: ELEMENT_WIDTH,
+      width: nodeWidth,
       height: ELEMENT_HEIGHT,
     });
     if (el.boundaryId) {
@@ -200,20 +212,28 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
         .attr('y2', ny + elNode.height);
     }
 
-    // Element label
+    // Element label + threat badges — label left-of-center, badges to its right
+    const elementThreats = threats.filter((t) => t.targetId === elId);
+    const badgesWidth =
+      elementThreats.length > 0
+        ? 8 + elementThreats.length * (BADGE_SIZE + BADGE_GAP) - BADGE_GAP
+        : 0;
+
+    // Center the label+badges group within the element
+    const labelX = elNode.x - badgesWidth / 2;
     group
       .append('text')
-      .attr('x', elNode.x)
+      .attr('x', labelX)
       .attr('y', elNode.y)
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'central')
       .text(el.label);
 
-    // Draw threat badges
-    const elementThreats = threats.filter((t) => t.targetId === elId);
+    // Draw threat badges to the right of the label
     if (elementThreats.length > 0) {
-      const badgeStartX = elNode.x - (elementThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
-      const badgeY = ny - BADGE_SIZE - 4;
+      const labelHalfWidth = (el.label.length * 8) / 2; // approximate
+      const badgeStartX = labelX + labelHalfWidth + 8;
+      const badgeY = elNode.y - BADGE_SIZE / 2;
 
       for (const [i, threat] of elementThreats.entries()) {
         const isFaded = threat.status === 'mitigated' || threat.status === 'not-applicable';
