@@ -41,7 +41,6 @@ const getStyles: DiagramStylesProvider = () =>
   }
 
   /* Data Flow Arrows */
-  .dfd-flow line,
   .dfd-flow path {
     stroke: #333333;
     stroke-width: 1.5px;
@@ -55,7 +54,6 @@ const getStyles: DiagramStylesProvider = () =>
   }
 
   /* Boundary-crossing flows */
-  .dfd-flow-crossing line,
   .dfd-flow-crossing path {
     stroke: #e74c3c;
     stroke-width: 2.5px;

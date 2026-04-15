@@ -2,8 +2,10 @@ import type { DrawDefinition, SVG } from '../../diagram-api/types.js';
 import { log } from '../../logger.js';
 import { selectSvgElement } from '../../rendering-util/selectSvgElement.js';
 import { configureSvgSize } from '../../setupGraphViewbox.js';
+import { line, curveBasis } from 'd3';
 import type { DfdDB } from './db.js';
 import type { DfdElement, DfdTrustBoundary, DfdDirection } from './types.js';
+import type { DfdDataFlow } from './types.js';
 import { STRIDE_COLORS, STRIDE_NAMES } from './types.js';
 
 // Layout constants
@@ -16,6 +18,7 @@ const BADGE_SIZE = 16;
 const BADGE_GAP = 3;
 const ARROW_HEAD_SIZE = 8;
 const TITLE_HEIGHT = 40;
+const PARALLEL_FLOW_OFFSET = 20; // perpendicular offset between parallel flows
 
 interface LayoutNode {
   id: string;
@@ -401,75 +404,121 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
     }
   }
 
-  // Draw flows
+  // Draw flows — curved paths with parallel flow offsets
+  // Group flows by endpoint pair to offset parallel flows
+  const pairMap = new Map<string, { flow: DfdDataFlow; index: number }[]>();
   for (const flow of flows) {
-    const sourceNode = layoutNodes.get(flow.source);
-    const targetNode = layoutNodes.get(flow.target);
-    if (!sourceNode || !targetNode) {
-      log.warn(`Flow references unknown element: ${flow.source} -> ${flow.target}`);
-      continue;
+    // Normalize pair key so A→B and B→A share the same group
+    const pairKey = [flow.source, flow.target].sort().join('::');
+    if (!pairMap.has(pairKey)) {
+      pairMap.set(pairKey, []);
     }
+    pairMap.get(pairKey)!.push({ flow, index: pairMap.get(pairKey)!.length });
+  }
 
-    const { cx: targetCx, cy: targetCy } = getCenter(targetNode);
-    const { cx: sourceCx, cy: sourceCy } = getCenter(sourceNode);
-    const startPoint = getEdgePoint(sourceNode, targetCx, targetCy);
-    const endPoint = getEdgePoint(targetNode, sourceCx, sourceCy);
+  const curvedLine = line<[number, number]>()
+    .x((d) => d[0])
+    .y((d) => d[1])
+    .curve(curveBasis);
 
-    const flowClass = flow.crossesBoundary ? 'dfd-flow-crossing' : 'dfd-flow';
-    const markerRef = flow.crossesBoundary ? `url(#${id}-arrowhead-red)` : `url(#${id}-arrowhead)`;
+  for (const group of pairMap.values()) {
+    const count = group.length;
 
-    const flowGroup = diagramGroup
-      .append('g')
-      .attr('class', flowClass)
-      .attr('data-flow-id', flow.id ?? `flow-${flow.index}`);
+    for (const { flow, index } of group) {
+      const sourceNode = layoutNodes.get(flow.source);
+      const targetNode = layoutNodes.get(flow.target);
+      if (!sourceNode || !targetNode) {
+        log.warn(`Flow references unknown element: ${flow.source} -> ${flow.target}`);
+        continue;
+      }
 
-    flowGroup
-      .append('line')
-      .attr('x1', startPoint.x)
-      .attr('y1', startPoint.y)
-      .attr('x2', endPoint.x)
-      .attr('y2', endPoint.y)
-      .attr('marker-end', markerRef);
+      const { cx: sourceCx, cy: sourceCy } = getCenter(sourceNode);
+      const { cx: targetCx, cy: targetCy } = getCenter(targetNode);
 
-    // Flow label at midpoint
-    const midX = (startPoint.x + endPoint.x) / 2;
-    const midY = (startPoint.y + endPoint.y) / 2;
-    flowGroup
-      .append('text')
-      .attr('x', midX)
-      .attr('y', midY - 8)
-      .attr('text-anchor', 'middle')
-      .text(flow.label);
+      // Compute perpendicular offset for parallel flows
+      const dx = targetCx - sourceCx;
+      const dy = targetCy - sourceCy;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      // Unit perpendicular vector (rotated 90° CCW)
+      const perpX = len > 0 ? -dy / len : 0;
+      const perpY = len > 0 ? dx / len : 1;
+      // Center the offsets: -1, 0, 1 for 3 flows; -0.5, 0.5 for 2 flows; 0 for 1
+      const offsetFactor = count > 1 ? index - (count - 1) / 2 : 0;
+      const offsetX = perpX * offsetFactor * PARALLEL_FLOW_OFFSET;
+      const offsetY = perpY * offsetFactor * PARALLEL_FLOW_OFFSET;
 
-    // Draw threat badges on flows
-    const flowThreats = threats.filter((t) => t.targetId === flow.id);
-    if (flowThreats.length > 0) {
-      const badgeStartX = midX - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
-      const badgeY = midY + 4;
+      // Offset start/end aiming points, then compute edge intersection
+      const aimTargetX = targetCx + offsetX;
+      const aimTargetY = targetCy + offsetY;
+      const aimSourceX = sourceCx + offsetX;
+      const aimSourceY = sourceCy + offsetY;
+      const startPoint = getEdgePoint(sourceNode, aimTargetX, aimTargetY);
+      const endPoint = getEdgePoint(targetNode, aimSourceX, aimSourceY);
 
-      for (const [i, threat] of flowThreats.entries()) {
-        const isFaded = threat.status === 'mitigated' || threat.status === 'not-applicable';
-        const badgeGroup = diagramGroup
-          .append('g')
-          .attr('class', `dfd-threat-badge${isFaded ? ' faded' : ''}`)
-          .attr('data-threat-id', threat.number)
-          .attr('data-flow-id', flow.id ?? `flow-${flow.index}`);
+      // Midpoint with offset for curve control
+      const midX = (startPoint.x + endPoint.x) / 2 + offsetX;
+      const midY = (startPoint.y + endPoint.y) / 2 + offsetY;
 
-        const bx = badgeStartX + i * (BADGE_SIZE + BADGE_GAP);
+      const points: [number, number][] = [
+        [startPoint.x, startPoint.y],
+        [midX, midY],
+        [endPoint.x, endPoint.y],
+      ];
 
-        badgeGroup
-          .append('rect')
-          .attr('x', bx)
-          .attr('y', badgeY)
-          .attr('width', BADGE_SIZE)
-          .attr('height', BADGE_SIZE)
-          .attr('fill', STRIDE_COLORS[threat.category]);
+      const flowClass = flow.crossesBoundary ? 'dfd-flow-crossing' : 'dfd-flow';
+      const markerRef = flow.crossesBoundary
+        ? `url(#${id}-arrowhead-red)`
+        : `url(#${id}-arrowhead)`;
 
-        badgeGroup
-          .append('text')
-          .attr('x', bx + BADGE_SIZE / 2)
-          .attr('y', badgeY + BADGE_SIZE / 2)
-          .text(String(threat.number));
+      const flowGroup = diagramGroup
+        .append('g')
+        .attr('class', flowClass)
+        .attr('data-flow-id', flow.id ?? `flow-${flow.index}`);
+
+      flowGroup
+        .append('path')
+        .attr('d', curvedLine(points))
+        .attr('fill', 'none')
+        .attr('marker-end', markerRef);
+
+      // Flow label at the offset midpoint
+      flowGroup
+        .append('text')
+        .attr('x', midX)
+        .attr('y', midY - 8)
+        .attr('text-anchor', 'middle')
+        .text(flow.label);
+
+      // Draw threat badges on flows
+      const flowThreats = threats.filter((t) => t.targetId === flow.id);
+      if (flowThreats.length > 0) {
+        const badgeStartX = midX - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
+        const badgeY = midY + 4;
+
+        for (const [i, threat] of flowThreats.entries()) {
+          const isFaded = threat.status === 'mitigated' || threat.status === 'not-applicable';
+          const badgeGroup = diagramGroup
+            .append('g')
+            .attr('class', `dfd-threat-badge${isFaded ? ' faded' : ''}`)
+            .attr('data-threat-id', threat.number)
+            .attr('data-flow-id', flow.id ?? `flow-${flow.index}`);
+
+          const bx = badgeStartX + i * (BADGE_SIZE + BADGE_GAP);
+
+          badgeGroup
+            .append('rect')
+            .attr('x', bx)
+            .attr('y', badgeY)
+            .attr('width', BADGE_SIZE)
+            .attr('height', BADGE_SIZE)
+            .attr('fill', STRIDE_COLORS[threat.category]);
+
+          badgeGroup
+            .append('text')
+            .attr('x', bx + BADGE_SIZE / 2)
+            .attr('y', badgeY + BADGE_SIZE / 2)
+            .text(String(threat.number));
+        }
       }
     }
   }
