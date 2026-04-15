@@ -35,6 +35,8 @@ export {
   EmModelEntityType,
   isEmModelEntityType,
   isEmResetFrame,
+  Dfd,
+  isDfd,
 } from './generated/ast.js';
 
 export {
@@ -49,6 +51,7 @@ export {
   TreemapGrammarGeneratedModule as TreemapGeneratedModule,
   TreeViewGrammarGeneratedModule as TreeViewGeneratedModule,
   WardleyGrammarGeneratedModule as WardleyGeneratedModule,
+  DfdGrammarGeneratedModule as DfdGeneratedModule,
 } from './generated/module.js';
 
 export * from './gitGraph/index.js';
@@ -62,3 +65,4 @@ export * from './eventmodeling/index.js';
 export * from './radar/index.js';
 export * from './treemap/index.js';
 export * from './wardley/index.js';
+export * from './dfd/index.js';

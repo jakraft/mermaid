@@ -11,6 +11,7 @@ import type {
   Treemap,
   TreeView,
   Wardley,
+  Dfd,
 } from './index.js';
 
 export type DiagramAST =
@@ -22,7 +23,8 @@ export type DiagramAST =
   | EventModel
   | Radar
   | TreeView
-  | Wardley;
+  | Wardley
+  | Dfd;
 
 const parsers: Record<string, LangiumParser> = {};
 const initializers = {
@@ -76,6 +78,11 @@ const initializers = {
     const parser = createWardleyServices().Wardley.parser.LangiumParser;
     parsers.wardley = parser;
   },
+  dfd: async () => {
+    const { createDfdServices } = await import('./language/dfd/index.js');
+    const parser = createDfdServices().Dfd.parser.LangiumParser;
+    parsers.dfd = parser;
+  },
 } as const;
 
 export async function parse(diagramType: 'info', text: string): Promise<Info>;
@@ -88,6 +95,7 @@ export async function parse(diagramType: 'eventmodeling', text: string): Promise
 export async function parse(diagramType: 'radar', text: string): Promise<Radar>;
 export async function parse(diagramType: 'treemap', text: string): Promise<Treemap>;
 export async function parse(diagramType: 'wardley', text: string): Promise<Wardley>;
+export async function parse(diagramType: 'dfd', text: string): Promise<Dfd>;
 
 export async function parse<T extends DiagramAST>(
   diagramType: keyof typeof initializers,

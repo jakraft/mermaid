@@ -50,6 +50,11 @@
       "id": "wardley",
       "grammar": "src/language/wardley/wardley.langium",
       "fileExtensions": [".mmd", ".mermaid"]
+    },
+    {
+      "id": "dfd",
+      "grammar": "src/language/dfd/dfd.langium",
+      "fileExtensions": [".mmd", ".mermaid"]
     }
   ],
   "mode": "production",
