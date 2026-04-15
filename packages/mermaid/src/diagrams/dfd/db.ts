@@ -54,7 +54,13 @@ const addElement = (id: string, label: string, type: DfdElementType, boundaryId?
   log.debug(`Added ${type}: ${id} "${label}"${boundaryId ? ` in boundary ${boundaryId}` : ''}`);
 };
 
-const addFlow = (source: string, target: string, label: string, flowId?: string): void => {
+const addFlow = (
+  source: string,
+  target: string,
+  label: string,
+  flowId?: string,
+  description?: string
+): void => {
   const index = flowCounter++;
   const flow: DfdDataFlow = {
     id: flowId ?? undefined,
@@ -62,6 +68,7 @@ const addFlow = (source: string, target: string, label: string, flowId?: string)
     source,
     target,
     label,
+    description,
   };
   flows.push(flow);
   log.debug(`Added flow: ${source} -> ${target} "${label}"`);
@@ -153,7 +160,13 @@ export interface DfdDB {
   getAccDescription: () => string;
 
   addElement: (id: string, label: string, type: DfdElementType, boundaryId?: string) => void;
-  addFlow: (source: string, target: string, label: string, flowId?: string) => void;
+  addFlow: (
+    source: string,
+    target: string,
+    label: string,
+    flowId?: string,
+    description?: string
+  ) => void;
   addBoundary: (id: string, label: string, parentBoundaryId?: string) => void;
   addThreat: (
     targetId: string,

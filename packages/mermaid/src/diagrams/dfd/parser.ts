@@ -7,6 +7,31 @@ import type { DfdDB } from './db.js';
 import { db } from './db.js';
 import type { StrideCategory, SeverityLevel, ThreatStatus } from './types.js';
 
+/** Strip triple-quote delimiters and common leading whitespace from multi-line text. */
+function stripTripleQuotes(raw: string | undefined): string | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  // Remove """ delimiters
+  let text = raw.replace(/^"""/, '').replace(/"""$/, '');
+  // Split into lines, drop leading/trailing empty lines
+  const lines = text.split('\n');
+  while (lines.length > 0 && lines[0].trim() === '') {
+    lines.shift();
+  }
+  while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
+    lines.pop();
+  }
+  // Find minimum indentation
+  const indents = lines
+    .filter((l) => l.trim().length > 0)
+    .map((l) => /^(\s*)/.exec(l)?.[1].length ?? 0);
+  const minIndent = indents.length > 0 ? Math.min(...indents) : 0;
+  // Strip common indent and join
+  text = lines.map((l) => l.slice(minIndent)).join('\n');
+  return text.length > 0 ? text : undefined;
+}
+
 /**
  * Walk a trust boundary AST node recursively, adding elements, flows,
  * threats, and nested boundaries to the DB.
@@ -33,7 +58,8 @@ function walkBoundary(
       flow.source,
       flow.target,
       flow.label.replace(/^"|"$/g, ''),
-      flow.flowId ?? undefined
+      flow.flowId ?? undefined,
+      stripTripleQuotes(flow.description)
     );
   }
   for (const threat of boundary.threats) {
@@ -84,7 +110,8 @@ const populateDb = (ast: Dfd, db: DfdDB): void => {
       flow.source,
       flow.target,
       flow.label.replace(/^"|"$/g, ''),
-      flow.flowId ?? undefined
+      flow.flowId ?? undefined,
+      stripTripleQuotes(flow.description)
     );
   }
 

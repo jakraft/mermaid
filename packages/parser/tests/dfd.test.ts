@@ -99,6 +99,37 @@ describe('dfd', () => {
       expect(result.flows[0].flowId).toBe('f1');
       expect(result.flows[0].source).toBe('user');
     });
+
+    it('should parse flows with triple-quote description', async () => {
+      const result = await parse(
+        'dfd',
+        `dfd-beta
+  external user "User"
+  process web "Web Server"
+  user -- "request" --> web
+    """
+      Sends login credentials over HTTPS.
+      Includes CSRF token in header.
+    """
+`
+      );
+      expect(result.flows).toHaveLength(1);
+      expect(result.flows[0].description).toContain('Sends login credentials');
+      expect(result.flows[0].description).toContain('CSRF token');
+    });
+
+    it('should parse flows without description (backwards compat)', async () => {
+      const result = await parse(
+        'dfd',
+        `dfd-beta
+  external user "User"
+  process web "Web Server"
+  user -- "request" --> web
+`
+      );
+      expect(result.flows).toHaveLength(1);
+      expect(result.flows[0].description).toBeUndefined();
+    });
   });
 
   describe('boundaries', () => {

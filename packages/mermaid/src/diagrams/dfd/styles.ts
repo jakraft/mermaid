@@ -25,13 +25,21 @@ const getStyles: DiagramStylesProvider = () =>
     font-weight: normal;
   }
 
-  .dfd-datastore rect {
+  .dfd-datastore .ds-body {
+    fill: #ffffff;
+    stroke: none;
+  }
+  .dfd-datastore .ds-side {
+    stroke: #333333;
+    stroke-width: 2px;
+  }
+  .dfd-datastore .ds-top-cap {
     fill: #ffffff;
     stroke: #333333;
     stroke-width: 2px;
   }
-  .dfd-datastore .ds-top-line,
-  .dfd-datastore .ds-bottom-line {
+  .dfd-datastore .ds-bottom-cap {
+    fill: none;
     stroke: #333333;
     stroke-width: 2px;
   }
@@ -84,10 +92,10 @@ const getStyles: DiagramStylesProvider = () =>
     dominant-baseline: central;
   }
   .dfd-threat-badge.faded rect {
-    opacity: 0.3;
+    opacity: 0.5;
   }
   .dfd-threat-badge.faded text {
-    opacity: 0.3;
+    opacity: 0.7;
   }
 
   /* Threat Summary Table */
@@ -97,16 +105,30 @@ const getStyles: DiagramStylesProvider = () =>
     width: 100%;
     margin-top: 16px;
   }
-  .dfd-threat-table th {
-    background-color: #f5f5f5;
-    border: 1px solid #dddddd;
-    padding: 8px 12px;
-    text-align: left;
-    font-weight: bold;
-  }
+  .dfd-threat-table th,
   .dfd-threat-table td {
     border: 1px solid #dddddd;
     padding: 8px 12px;
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+  }
+  .dfd-threat-table th {
+    background-color: #f5f5f5;
+    text-align: left;
+    font-weight: bold;
+    white-space: nowrap;
+  }
+
+  .threat-category-badge {
+    display: inline-block;
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-right: 6px;
+    vertical-align: middle;
   }
   .dfd-threat-table tr.threat-mitigated td,
   .dfd-threat-table tr.threat-not-applicable td {

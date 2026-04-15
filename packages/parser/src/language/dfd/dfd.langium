@@ -53,6 +53,7 @@ TrustBoundary:
 
 DataFlow:
   (flowId=ID ":")? source=ID DFD_ARROW label=STRING DFD_ARROW_HEAD target=ID EOL
+  (description=TRIPLE_QUOTE_STRING)?
 ;
 
 ThreatStatement:
@@ -67,3 +68,4 @@ terminal SEVERITY_LEVEL: 'low' | 'medium' | 'high' | 'critical';
 terminal THREAT_STATUS: 'new' | 'investigate' | 'not-applicable' | 'mitigated';
 terminal DFD_ARROW_HEAD: '-->';
 terminal DFD_ARROW: '--';
+terminal TRIPLE_QUOTE_STRING: /"""[\s\S]*?"""/;

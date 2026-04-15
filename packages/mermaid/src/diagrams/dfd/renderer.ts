@@ -186,30 +186,52 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
         .attr('rx', 10)
         .attr('ry', 10);
     } else if (el.type === 'datastore') {
+      const ry = 8; // ellipse vertical radius for cylinder caps
+      const topY = ny + ry;
+      const bottomY = ny + elNode.height - ry;
+      const halfW = elNode.width / 2;
+
+      // White fill for the body area (no stroke)
       group
         .append('rect')
+        .attr('class', 'ds-body')
         .attr('x', nx)
-        .attr('y', ny)
+        .attr('y', topY)
         .attr('width', elNode.width)
-        .attr('height', elNode.height)
-        .attr('fill', '#ffffff')
-        .attr('stroke', 'none');
+        .attr('height', bottomY - topY);
 
+      // Left side line
       group
         .append('line')
-        .attr('class', 'ds-top-line')
+        .attr('class', 'ds-side')
         .attr('x1', nx)
-        .attr('y1', ny)
-        .attr('x2', nx + elNode.width)
-        .attr('y2', ny);
+        .attr('y1', topY)
+        .attr('x2', nx)
+        .attr('y2', bottomY);
 
+      // Right side line
       group
         .append('line')
-        .attr('class', 'ds-bottom-line')
-        .attr('x1', nx)
-        .attr('y1', ny + elNode.height)
+        .attr('class', 'ds-side')
+        .attr('x1', nx + elNode.width)
+        .attr('y1', topY)
         .attr('x2', nx + elNode.width)
-        .attr('y2', ny + elNode.height);
+        .attr('y2', bottomY);
+
+      // Bottom half-ellipse arc (only the bottom curve)
+      group
+        .append('path')
+        .attr('class', 'ds-bottom-cap')
+        .attr('d', `M ${nx},${bottomY} A ${halfW},${ry} 0 0,0 ${nx + elNode.width},${bottomY}`);
+
+      // Top ellipse (full)
+      group
+        .append('ellipse')
+        .attr('class', 'ds-top-cap')
+        .attr('cx', elNode.x)
+        .attr('cy', topY)
+        .attr('rx', halfW)
+        .attr('ry', ry);
     }
 
     // Element label + threat badges — label left-of-center, badges to its right
@@ -220,11 +242,13 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
         : 0;
 
     // Center the label+badges group within the element
+    // For datastores, shift down slightly to account for the top ellipse cap
+    const labelYOffset = el.type === 'datastore' ? 4 : 0;
     const labelX = elNode.x - badgesWidth / 2;
     group
       .append('text')
       .attr('x', labelX)
-      .attr('y', elNode.y)
+      .attr('y', elNode.y + labelYOffset)
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'central')
       .text(el.label);
@@ -233,7 +257,7 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
     if (elementThreats.length > 0) {
       const labelHalfWidth = (el.label.length * 8) / 2; // approximate
       const badgeStartX = labelX + labelHalfWidth + 8;
-      const badgeY = elNode.y - BADGE_SIZE / 2;
+      const badgeY = elNode.y + labelYOffset - BADGE_SIZE / 2;
 
       for (const [i, threat] of elementThreats.entries()) {
         const isFaded = threat.status === 'mitigated' || threat.status === 'not-applicable';
@@ -244,6 +268,8 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
           .attr('data-element-id', elId);
 
         const bx = badgeStartX + i * (BADGE_SIZE + BADGE_GAP);
+
+        badgeGroup.append('title').text(`${STRIDE_NAMES[threat.category]}: ${threat.description}`);
 
         badgeGroup
           .append('rect')
@@ -291,6 +317,11 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
       .attr('fill', 'none')
       .attr('marker-end', `url(#${id}-arrowhead)`);
 
+    // Flow description tooltip
+    if (flow.description) {
+      flowGroup.append('title').text(flow.description);
+    }
+
     // Flow label at the midpoint of the edge
     const midIdx = Math.floor(edgeObj.points.length / 2);
     const midPoint = edgeObj.points[midIdx];
@@ -317,6 +348,8 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
 
         const bx = badgeStartX + i * (BADGE_SIZE + BADGE_GAP);
 
+        badgeGroup.append('title').text(`${STRIDE_NAMES[threat.category]}: ${threat.description}`);
+
         badgeGroup
           .append('rect')
           .attr('x', bx)
@@ -334,23 +367,30 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
     }
   }
 
+  // Compute graph bounds and width first
+  const bounds = getGraphBounds(graph, elements, boundaries);
+  const TABLE_MIN_WIDTH = 1000;
+  const hasTable = showThreats && threats.length > 0;
+  const totalWidth = Math.max(bounds.maxX + BOUNDARY_PAD, hasTable ? TABLE_MIN_WIDTH : 0, 400);
+
   // Draw threat summary table (as SVG foreignObject with HTML table)
-  if (showThreats && threats.length > 0) {
-    const graphBounds = getGraphBounds(graph, elements, boundaries);
-    const tableY = graphBounds.maxY + 30;
+  let tableActualHeight = 0;
+  if (hasTable) {
+    const tableY = bounds.maxY + 30;
 
     const fo = diagramGroup
       .append('foreignObject')
       .attr('x', 0)
       .attr('y', tableY)
-      .attr('width', Math.max(graphBounds.maxX, 800))
-      .attr('height', threats.length * 40 + 60);
+      .attr('width', totalWidth)
+      .attr('height', 10000)
+      .attr('overflow', 'visible');
 
     const table = fo.append('xhtml:table').attr('class', 'dfd-threat-table');
 
     // Header
     const thead = table.append('thead').append('tr');
-    ['#', 'Element', 'Category', 'Threat', 'Severity', 'Status', 'Description'].forEach((header) =>
+    ['#', 'Element', 'Threat', 'Severity', 'Status'].forEach((header) =>
       thead.append('th').text(header)
     );
 
@@ -362,7 +402,7 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
       const elementLabel = targetElement
         ? targetElement.label
         : targetFlow
-          ? `${targetFlow.source} → ${targetFlow.target}`
+          ? `${elements.get(targetFlow.source)?.label ?? targetFlow.source} → ${elements.get(targetFlow.target)?.label ?? targetFlow.target}`
           : threat.targetId;
 
       const rowClass =
@@ -376,24 +416,33 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
 
       row.append('td').text(String(threat.number));
       row.append('td').text(elementLabel);
-      row.append('td').text(threat.category);
-      row.append('td').text(STRIDE_NAMES[threat.category]);
+      // Threat name with colored category badge
+      const threatTd = row.append('td');
+      threatTd
+        .append('span')
+        .attr('class', 'threat-category-badge')
+        .attr('style', `background-color: ${STRIDE_COLORS[threat.category]}`)
+        .text(STRIDE_NAMES[threat.category]);
+      threatTd.append('span').text(` ${threat.description}`);
       row
         .append('td')
         .attr('class', threat.severity ? `severity-${threat.severity}` : '')
         .text(threat.severity ?? '—');
       row.append('td').text(threat.status);
-      row.append('td').text(threat.description);
     }
+
+    // Measure actual rendered table height from the DOM
+    const tableNode = table.node() as HTMLElement | null;
+    tableActualHeight =
+      tableNode?.offsetHeight ?? tableNode?.scrollHeight ?? threats.length * 60 + 80;
+    fo.attr('height', tableActualHeight);
   }
 
-  // Compute total dimensions and configure SVG size
-  const bounds = getGraphBounds(graph, elements, boundaries);
+  // Compute final SVG height using measured table height
   let totalHeight = bounds.maxY + BOUNDARY_PAD;
-  if (showThreats && threats.length > 0) {
-    totalHeight += threats.length * 40 + 90;
+  if (tableActualHeight > 0) {
+    totalHeight += tableActualHeight + 30;
   }
-  const totalWidth = Math.max(bounds.maxX + BOUNDARY_PAD, 400);
 
   // Center the title
   if (title) {

@@ -106,6 +106,92 @@
         app -- "write" --> db
     </pre>
 
+    <hr />
+
+    <h2>Healthcare Portal — Full STRIDE Analysis</h2>
+    <pre class="mermaid">
+      dfd-beta showThreats
+        title Healthcare Portal Threat Model
+        direction LR
+
+        external patient "Patient Browser"
+        external doctor "Doctor Mobile App"
+        external lab "Lab System"
+        external insurer "Insurance API"
+
+        boundary dmz "DMZ" {
+          process lb "Load Balancer"
+          process waf "WAF"
+        }
+
+        boundary internal "Internal Network" {
+          boundary app_tier "Application Tier" {
+            process api "API Gateway"
+            process auth "Auth Service"
+            process records "Records Service"
+            process notify "Notification Service"
+            process billing "Billing Engine"
+          }
+
+          boundary data_tier "Data Tier" {
+            datastore ehr "EHR Database"
+            datastore audit "Audit Log"
+            datastore cache "Session Cache"
+            datastore docs "Document Store"
+          }
+        }
+
+        patient -- "HTTPS request" --> lb
+          """
+            Patient browser sends HTTPS requests through
+            the public internet. All traffic is TLS 1.3
+            encrypted with certificate pinning.
+          """
+        doctor -- "mTLS request" --> lb
+          """
+            Doctor mobile app uses mutual TLS with
+            client certificates for authentication.
+          """
+        lb -- "forward" --> waf
+        waf -- "filtered request" --> api
+        api -- "authenticate" --> auth
+        auth -- "session check" --> cache
+        api -- "patient data" --> records
+          """
+            Requests include patient ID, record type,
+            and date range filters. PHI is transmitted
+            in encrypted payload fields.
+          """
+        records -- "read/write EHR" --> ehr
+        records -- "store documents" --> docs
+        records -- "audit trail" --> audit
+        api -- "send alert" --> notify
+        notify -- "push notification" --> doctor
+        api -- "submit claim" --> billing
+        billing -- "claim request" --> insurer
+        billing -- "billing record" --> ehr
+        lab -- "lab results" --> api
+
+        threat patient S "Credential stuffing attack" severity high status investigate
+        threat patient S "Session token theft via XSS" severity critical status mitigated
+        threat lb D "Volumetric DDoS attack" severity high status mitigated
+        threat waf T "WAF rule bypass via encoding" severity medium status not-applicable
+        threat api E "Broken access control to admin endpoints" severity critical status new
+        threat api D "API rate limit exhaustion" severity medium status mitigated
+        threat auth S "OAuth token forgery" severity high status investigate
+        threat auth R "Failed login attempts not logged" severity medium status new
+        threat records I "Patient data exposure via IDOR" severity critical status investigate
+        threat records T "Unauthorized record modification" severity high status new
+        threat ehr I "Database backup exfiltration" severity high status investigate
+        threat ehr T "SQL injection via search" severity critical status mitigated
+        threat audit R "Audit log tampering" severity high status new
+        threat cache T "Session fixation attack" severity medium status investigate
+        threat docs I "Unencrypted PHI at rest" severity critical status new
+        threat notify S "Spoofed push notifications" severity medium status not-applicable
+        threat billing E "Price manipulation via API" severity high status investigate
+        threat billing I "Claim data leak to third party" severity medium status new
+    </pre>
+
     <script type="module">
       import mermaid from '/mermaid.esm.mjs';
       mermaid.initialize({

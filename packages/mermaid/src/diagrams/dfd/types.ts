@@ -17,6 +17,7 @@ export interface DfdDataFlow {
   source: string;
   target: string;
   label: string;
+  description?: string;
 }
 
 export interface DfdTrustBoundary {
@@ -55,7 +56,7 @@ export const STRIDE_COLORS: Record<StrideCategory, string> = {
   T: '#e67e22', // Orange - Tampering
   R: '#f1c40f', // Yellow - Repudiation
   I: '#9b59b6', // Purple - Information Disclosure
-  D: '#c0392b', // Dark Red - Denial of Service
+  D: '#3498db', // Blue - Denial of Service
   E: '#2c3e50', // Dark - Elevation of Privilege
 };
 
