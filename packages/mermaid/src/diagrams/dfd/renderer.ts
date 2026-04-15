@@ -325,12 +325,13 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
     // Flow label at the midpoint of the edge
     const midIdx = Math.floor(edgeObj.points.length / 2);
     const midPoint = edgeObj.points[midIdx];
+    const displayLabel = flow.numberLabel ? `${flow.numberLabel}. ${flow.label}` : flow.label;
     flowGroup
       .append('text')
       .attr('x', midPoint.x)
       .attr('y', midPoint.y - 8)
       .attr('text-anchor', 'middle')
-      .text(flow.label);
+      .text(displayLabel);
 
     // Draw threat badges on flows
     const flowThreats = threats.filter((t) => t.targetId === flow.id);
@@ -399,10 +400,15 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
     for (const threat of threats) {
       const targetElement = elements.get(threat.targetId);
       const targetFlow = flows.find((f) => f.id === threat.targetId);
+      const flowLabel = targetFlow
+        ? `${elements.get(targetFlow.source)?.label ?? targetFlow.source} → ${elements.get(targetFlow.target)?.label ?? targetFlow.target}`
+        : undefined;
       const elementLabel = targetElement
         ? targetElement.label
-        : targetFlow
-          ? `${elements.get(targetFlow.source)?.label ?? targetFlow.source} → ${elements.get(targetFlow.target)?.label ?? targetFlow.target}`
+        : flowLabel
+          ? targetFlow?.numberLabel
+            ? `${targetFlow.numberLabel}. ${flowLabel}`
+            : flowLabel
           : threat.targetId;
 
       const rowClass =

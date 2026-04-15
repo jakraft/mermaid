@@ -28,6 +28,7 @@ let boundaries = new Map<string, DfdTrustBoundary>();
 let threats: DfdThreat[] = [];
 let direction: DfdDirection = 'TB';
 let showThreats = false;
+let autonumber = false;
 let threatCounter = 0;
 let flowCounter = 0;
 
@@ -38,6 +39,7 @@ const clear = (): void => {
   threats = [];
   direction = 'TB';
   showThreats = false;
+  autonumber = false;
   threatCounter = 0;
   flowCounter = 0;
   commonClear();
@@ -59,7 +61,8 @@ const addFlow = (
   target: string,
   label: string,
   flowId?: string,
-  description?: string
+  description?: string,
+  numberLabel?: string
 ): void => {
   const index = flowCounter++;
   const flow: DfdDataFlow = {
@@ -69,9 +72,12 @@ const addFlow = (
     target,
     label,
     description,
+    numberLabel,
   };
   flows.push(flow);
-  log.debug(`Added flow: ${source} -> ${target} "${label}"`);
+  log.debug(
+    `Added flow: ${source} -> ${target} "${label}"${numberLabel ? ` [${numberLabel}]` : ''}`
+  );
 };
 
 const addBoundary = (id: string, label: string, parentBoundaryId?: string): void => {
@@ -142,6 +148,10 @@ const setShowThreats = (toggle: boolean): void => {
   showThreats = toggle;
 };
 
+const setAutonumber = (toggle: boolean): void => {
+  autonumber = toggle;
+};
+
 // Getters
 const getElements = (): Map<string, DfdElement> => elements;
 const getFlows = (): DfdDataFlow[] => flows;
@@ -149,6 +159,7 @@ const getBoundaries = (): Map<string, DfdTrustBoundary> => boundaries;
 const getThreats = (): DfdThreat[] => threats;
 const getDirection = (): DfdDirection => direction;
 const getShowThreats = (): boolean => showThreats;
+const getAutonumber = (): boolean => autonumber;
 
 export interface DfdDB {
   clear: () => void;
@@ -165,7 +176,8 @@ export interface DfdDB {
     target: string,
     label: string,
     flowId?: string,
-    description?: string
+    description?: string,
+    numberLabel?: string
   ) => void;
   addBoundary: (id: string, label: string, parentBoundaryId?: string) => void;
   addThreat: (
@@ -178,6 +190,7 @@ export interface DfdDB {
 
   setDirection: (dir: DfdDirection) => void;
   setShowThreats: (toggle: boolean) => void;
+  setAutonumber: (toggle: boolean) => void;
 
   getElements: () => Map<string, DfdElement>;
   getFlows: () => DfdDataFlow[];
@@ -185,6 +198,7 @@ export interface DfdDB {
   getThreats: () => DfdThreat[];
   getDirection: () => DfdDirection;
   getShowThreats: () => boolean;
+  getAutonumber: () => boolean;
 }
 
 export const db: DfdDB = {
@@ -203,6 +217,7 @@ export const db: DfdDB = {
 
   setDirection,
   setShowThreats,
+  setAutonumber,
 
   getElements,
   getFlows,
@@ -210,4 +225,5 @@ export const db: DfdDB = {
   getThreats,
   getDirection,
   getShowThreats,
+  getAutonumber,
 };

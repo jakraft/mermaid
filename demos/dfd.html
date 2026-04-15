@@ -192,6 +192,80 @@
         threat billing I "Claim data leak to third party" severity medium status new
     </pre>
 
+    <hr />
+
+    <h2>Auto-Numbered Flows with Subsequences</h2>
+    <pre class="mermaid">
+      dfd-beta autonumber
+        title API Request Lifecycle
+        direction LR
+
+        external client "Client App"
+
+        boundary gateway_zone "Gateway" {
+          process gw "API Gateway"
+          process authz "Auth Service"
+        }
+
+        boundary backend "Backend Services" {
+          process orders "Order Service"
+          process inventory "Inventory Service"
+          datastore db "Order Database"
+          datastore cache "Redis Cache"
+        }
+
+        client -- "API request" --> gw {
+          gw -- "validate token" --> authz
+          authz -- "check session" --> cache
+        }
+        gw -- "create order" --> orders {
+          orders -- "check stock" --> inventory {
+            inventory -- "read inventory" --> cache
+            inventory -- "update stock" --> db
+          }
+          orders -- "persist order" --> db
+        }
+        orders -- "order confirmation" --> gw
+        gw -- "response" --> client
+    </pre>
+
+    <hr />
+
+    <h2>Auto-Numbered with Threats</h2>
+    <pre class="mermaid">
+      dfd-beta showThreats autonumber
+        title Secure File Upload
+        direction LR
+
+        external user "User"
+
+        boundary app "Application" {
+          process upload "Upload Service"
+          process scan "Virus Scanner"
+          process encrypt "Encryption Service"
+        }
+
+        boundary storage "Storage" {
+          datastore files "File Store"
+          datastore meta "Metadata DB"
+        }
+
+        user -- "upload file" --> upload {
+          upload -- "scan file" --> scan
+          upload -- "encrypt file" --> encrypt {
+            encrypt -- "store encrypted" --> files
+          }
+          upload -- "save metadata" --> meta
+        }
+        upload -- "upload result" --> user
+
+        threat user S "Impersonate another user" severity high status investigate
+        threat upload T "Malicious file upload" severity critical status new
+        threat upload D "Large file DoS" severity medium status mitigated
+        threat scan T "Scanner bypass via polyglot" severity high status investigate
+        threat files I "Unencrypted data at rest" severity critical status mitigated
+    </pre>
+
     <script type="module">
       import mermaid from '/mermaid.esm.mjs';
       mermaid.initialize({

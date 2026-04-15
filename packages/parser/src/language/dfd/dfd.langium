@@ -3,7 +3,7 @@ import "../common/common";
 
 entry Dfd:
   NEWLINE*
-  "dfd-beta" showThreats?="showThreats"?
+  "dfd-beta" showThreats?="showThreats"? autonumber?="autonumber"?
   (
     NEWLINE
     | TitleAndAccessibilities
@@ -52,8 +52,11 @@ TrustBoundary:
 ;
 
 DataFlow:
-  (flowId=ID ":")? source=ID DFD_ARROW label=STRING DFD_ARROW_HEAD target=ID EOL
-  (description=TRIPLE_QUOTE_STRING)?
+  (flowId=ID ":")? source=ID DFD_ARROW label=STRING DFD_ARROW_HEAD target=ID
+  (
+    "{" (NEWLINE | subflows+=DataFlow)* "}"
+    | EOL (description=TRIPLE_QUOTE_STRING)? NEWLINE* ("{" (NEWLINE | subflows+=DataFlow)* "}")?
+  )
 ;
 
 ThreatStatement:

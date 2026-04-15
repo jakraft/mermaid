@@ -292,4 +292,105 @@ describe('dfd', () => {
       expect(result.threats).toHaveLength(4);
     });
   });
+
+  describe('autonumber', () => {
+    it('should parse autonumber flag', async () => {
+      const result = await parse('dfd', `dfd-beta autonumber\n`);
+      expect(result.autonumber).toBe(true);
+    });
+
+    it('should parse autonumber with showThreats', async () => {
+      const result = await parse('dfd', `dfd-beta showThreats autonumber\n`);
+      expect(result.showThreats).toBe(true);
+      expect(result.autonumber).toBe(true);
+    });
+
+    it('should default autonumber to false', async () => {
+      const result = await parse('dfd', `dfd-beta\n`);
+      expect(result.autonumber).toBe(false);
+    });
+
+    it('should parse flows with subflows', async () => {
+      const result = await parse(
+        'dfd',
+        `dfd-beta autonumber
+  external user "User"
+  process web "Web Server"
+  process api "API"
+  datastore db "Database"
+  user -- "request" --> web {
+    web -- "query" --> db
+    web -- "call" --> api
+  }
+`
+      );
+      expect(result.flows).toHaveLength(1);
+      expect(result.flows[0].source).toBe('user');
+      expect(result.flows[0].subflows).toHaveLength(2);
+      expect(result.flows[0].subflows[0].source).toBe('web');
+      expect(result.flows[0].subflows[0].target).toBe('db');
+      expect(result.flows[0].subflows[1].source).toBe('web');
+      expect(result.flows[0].subflows[1].target).toBe('api');
+    });
+
+    it('should parse nested subflows', async () => {
+      const result = await parse(
+        'dfd',
+        `dfd-beta autonumber
+  external user "User"
+  process web "Web Server"
+  process api "API"
+  datastore db "Database"
+  user -- "login" --> web {
+    web -- "validate" --> api {
+      api -- "lookup" --> db
+    }
+  }
+`
+      );
+      expect(result.flows).toHaveLength(1);
+      expect(result.flows[0].subflows).toHaveLength(1);
+      expect(result.flows[0].subflows[0].subflows).toHaveLength(1);
+      expect(result.flows[0].subflows[0].subflows[0].source).toBe('api');
+      expect(result.flows[0].subflows[0].subflows[0].target).toBe('db');
+    });
+
+    it('should parse subflows with descriptions', async () => {
+      const result = await parse(
+        'dfd',
+        `dfd-beta autonumber
+  external user "User"
+  process web "Web Server"
+  datastore db "Database"
+  user -- "request" --> web
+    """
+      Main request flow
+    """
+    {
+      web -- "query" --> db
+    }
+`
+      );
+      expect(result.flows).toHaveLength(1);
+      expect(result.flows[0].description).toContain('Main request flow');
+      expect(result.flows[0].subflows).toHaveLength(1);
+    });
+
+    it('should parse subflows without autonumber', async () => {
+      const result = await parse(
+        'dfd',
+        `dfd-beta
+  external user "User"
+  process web "Web Server"
+  datastore db "Database"
+  user -- "request" --> web {
+    web -- "query" --> db
+  }
+`
+      );
+      expect(result.autonumber).toBe(false);
+      expect(result.flows).toHaveLength(1);
+      expect(result.flows[0].subflows).toHaveLength(1);
+    });
+  });
 });

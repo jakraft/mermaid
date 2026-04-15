@@ -32,6 +32,40 @@ function stripTripleQuotes(raw: string | undefined): string | undefined {
   return text.length > 0 ? text : undefined;
 }
 
+/** AST DataFlow node type (from Langium-generated types) */
+type AstDataFlow = Dfd['flows'][number];
+
+/**
+ * Process a list of AST DataFlow nodes recursively, computing hierarchical
+ * number labels (e.g. "3", "3.1", "3.2.1") and adding them to the DB.
+ *
+ * @param flows - AST flow nodes at this nesting level
+ * @param db - DFD database
+ * @param autonumber - whether autonumber is enabled
+ * @param prefix - parent number prefix (e.g. "3.2"), empty string at root
+ */
+function processFlows(flows: AstDataFlow[], db: DfdDB, autonumber: boolean, prefix: string): void {
+  let counter = 0;
+  for (const flow of flows) {
+    counter++;
+    const numberLabel = autonumber ? (prefix ? `${prefix}.${counter}` : `${counter}`) : undefined;
+
+    db.addFlow(
+      flow.source,
+      flow.target,
+      flow.label.replace(/^"|"$/g, ''),
+      flow.flowId ?? undefined,
+      stripTripleQuotes(flow.description),
+      numberLabel
+    );
+
+    // Recursively process subflows
+    if (flow.subflows.length > 0) {
+      processFlows(flow.subflows, db, autonumber, numberLabel ?? `${counter}`);
+    }
+  }
+}
+
 /**
  * Walk a trust boundary AST node recursively, adding elements, flows,
  * threats, and nested boundaries to the DB.
@@ -39,8 +73,10 @@ function stripTripleQuotes(raw: string | undefined): string | undefined {
 function walkBoundary(
   boundary: Dfd['boundaries'][number],
   db: DfdDB,
+  autonumber: boolean,
+  flowPrefix: string,
   parentBoundaryId?: string
-): void {
+): number {
   db.addBoundary(boundary.id, boundary.label.replace(/^"|"$/g, ''), parentBoundaryId);
   const boundaryId = boundary.id;
 
@@ -53,15 +89,7 @@ function walkBoundary(
   for (const ds of boundary.datastores) {
     db.addElement(ds.id, ds.label.replace(/^"|"$/g, ''), 'datastore', boundaryId);
   }
-  for (const flow of boundary.flows) {
-    db.addFlow(
-      flow.source,
-      flow.target,
-      flow.label.replace(/^"|"$/g, ''),
-      flow.flowId ?? undefined,
-      stripTripleQuotes(flow.description)
-    );
-  }
+  processFlows(boundary.flows, db, autonumber, flowPrefix);
   for (const threat of boundary.threats) {
     db.addThreat(
       threat.target,
@@ -72,8 +100,9 @@ function walkBoundary(
     );
   }
   for (const child of boundary.boundaries) {
-    walkBoundary(child, db, boundaryId);
+    walkBoundary(child, db, autonumber, flowPrefix, boundaryId);
   }
+  return boundary.flows.length;
 }
 
 const populateDb = (ast: Dfd, db: DfdDB): void => {
@@ -88,6 +117,9 @@ const populateDb = (ast: Dfd, db: DfdDB): void => {
   // Show threats
   db.setShowThreats(ast.showThreats);
 
+  // Autonumber
+  db.setAutonumber(ast.autonumber);
+
   // Top-level elements
   for (const ext of ast.externals) {
     db.addElement(ext.id, ext.label.replace(/^"|"$/g, ''), 'external');
@@ -101,19 +133,11 @@ const populateDb = (ast: Dfd, db: DfdDB): void => {
 
   // Boundaries (recursive)
   for (const boundary of ast.boundaries) {
-    walkBoundary(boundary, db);
+    walkBoundary(boundary, db, ast.autonumber, '');
   }
 
-  // Top-level flows
-  for (const flow of ast.flows) {
-    db.addFlow(
-      flow.source,
-      flow.target,
-      flow.label.replace(/^"|"$/g, ''),
-      flow.flowId ?? undefined,
-      stripTripleQuotes(flow.description)
-    );
-  }
+  // Top-level flows (with recursive subflow numbering)
+  processFlows(ast.flows, db, ast.autonumber, '');
 
   // Top-level threats
   for (const threat of ast.threats) {

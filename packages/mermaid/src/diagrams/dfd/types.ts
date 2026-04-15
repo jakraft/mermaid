@@ -18,6 +18,7 @@ export interface DfdDataFlow {
   target: string;
   label: string;
   description?: string;
+  numberLabel?: string;
 }
 
 export interface DfdTrustBoundary {
