@@ -32,6 +32,37 @@ function toElkDirection(dir: string): string {
   }
 }
 
+/** Find the point at the geometric midpoint along a polyline path */
+function pathMidpoint(points: [number, number][]): [number, number] {
+  if (points.length === 0) {
+    return [0, 0];
+  }
+  if (points.length === 1) {
+    return points[0];
+  }
+  // Compute total path length
+  let totalLen = 0;
+  for (let i = 1; i < points.length; i++) {
+    const dx = points[i][0] - points[i - 1][0];
+    const dy = points[i][1] - points[i - 1][1];
+    totalLen += Math.sqrt(dx * dx + dy * dy);
+  }
+  // Walk along the path to the midpoint
+  const halfLen = totalLen / 2;
+  let walked = 0;
+  for (let i = 1; i < points.length; i++) {
+    const dx = points[i][0] - points[i - 1][0];
+    const dy = points[i][1] - points[i - 1][1];
+    const segLen = Math.sqrt(dx * dx + dy * dy);
+    if (walked + segLen >= halfLen && segLen > 0) {
+      const t = (halfLen - walked) / segLen;
+      return [points[i - 1][0] + dx * t, points[i - 1][1] + dy * t];
+    }
+    walked += segLen;
+  }
+  return points[points.length - 1];
+}
+
 interface ElkNode {
   id: string;
   width: number;
@@ -168,22 +199,22 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
       'elk.padding': `[top=${TITLE_HEIGHT + BOUNDARY_PAD},left=${BOUNDARY_PAD},bottom=${BOUNDARY_PAD},right=${BOUNDARY_PAD}]`,
       // Node spacing
-      'spacing.nodeNode': '60',
-      'spacing.nodeNodeBetweenLayers': '100',
+      'spacing.nodeNode': '80',
+      'spacing.nodeNodeBetweenLayers': '140',
       // Edge spacing — room for flow labels between parallel edges
-      'spacing.edgeEdge': '25',
-      'spacing.edgeEdgeBetweenLayers': '30',
-      'spacing.edgeNode': '30',
-      'spacing.edgeNodeBetweenLayers': '25',
-      'spacing.nodeSelfLoop': '40',
-      // Edge routing
-      'elk.layered.unnecessaryBendpoints': 'true',
-      'elk.layered.mergeHierarchyEdges': 'true',
+      'spacing.edgeEdge': '35',
+      'spacing.edgeEdgeBetweenLayers': '35',
+      'spacing.edgeNode': '40',
+      'spacing.edgeNodeBetweenLayers': '35',
+      'spacing.nodeSelfLoop': '50',
+      // Edge routing — splines produce smooth curves for backward edges
+      'elk.layered.edgeRouting': 'SPLINES',
       'elk.layered.edgeRouting.selfLoopDistribution': 'EQUALLY',
+      'elk.layered.mergeHierarchyEdges': 'true',
+      // Node placement — NETWORK_SIMPLEX minimizes total edge length
+      'nodePlacement.strategy': 'NETWORK_SIMPLEX',
       // Node ordering — respect declaration order for predictable layouts
       'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
-      'elk.layered.cycleBreaking.strategy': 'GREEDY_MODEL_ORDER',
-      'nodePlacement.strategy': 'BRANDES_KOEPF',
     },
     children: rootChildren,
     edges: elkEdges,
@@ -482,13 +513,12 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       .attr('fill', 'none')
       .attr('marker-end', `url(#${id}-arrowhead)`);
 
-    // Collect label for top-layer rendering
-    const midIdx = Math.floor(points.length / 2);
-    const midPoint = points[midIdx];
+    // Compute label position at the geometric midpoint of the edge path
+    const pathMid = pathMidpoint(points);
     const displayLabel = flow.numberLabel ? `${flow.numberLabel}. ${flow.label}` : flow.label;
     flowLabels.push({
-      x: midPoint[0],
-      y: midPoint[1] - 8,
+      x: pathMid[0],
+      y: pathMid[1] - 8,
       text: displayLabel,
       description: flow.description,
     });
@@ -496,8 +526,8 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
     // Draw threat badges on flows
     const flowThreats = threats.filter((t) => t.targetId === flow.id);
     if (flowThreats.length > 0) {
-      const badgeStartX = midPoint[0] - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
-      const badgeY = midPoint[1] + 4;
+      const badgeStartX = pathMid[0] - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
+      const badgeY = pathMid[1] + 4;
 
       for (const [i, threat] of flowThreats.entries()) {
         const isFaded = threat.status === 'mitigated' || threat.status === 'not-applicable';
