@@ -1,0 +1,453 @@
+# Data Flow Diagram
+
+> Data Flow Diagrams (DFDs) visualize how data moves through a system, showing external entities, processes, data stores, and trust boundaries. Combined with the STRIDE threat model, they help identify security threats at each component and data flow.
+
+## Basic Example
+
+```mermaid-example
+dfd-beta
+  title Simple Web App
+  direction LR
+
+  external user "Web User"
+
+  boundary web_tier "Web Tier" {
+    process web "Web Server"
+    process api "API Service"
+  }
+
+  boundary data_tier "Data Tier" {
+    datastore db "User Database"
+  }
+
+  user -- "HTTP request" --> web
+  web -- "REST call" --> api
+  api -- "SQL query" --> db
+```
+
+```mermaid
+dfd-beta
+  title Simple Web App
+  direction LR
+
+  external user "Web User"
+
+  boundary web_tier "Web Tier" {
+    process web "Web Server"
+    process api "API Service"
+  }
+
+  boundary data_tier "Data Tier" {
+    datastore db "User Database"
+  }
+
+  user -- "HTTP request" --> web
+  web -- "REST call" --> api
+  api -- "SQL query" --> db
+```
+
+## Syntax
+
+### Diagram Declaration
+
+Every DFD starts with `dfd-beta`, optionally followed by flags:
+
+- `showThreats` — Enables threat visualization (badges on elements and a threat table below the diagram)
+- `autonumber` — Automatically numbers data flows in sequence
+
+```
+dfd-beta                         # basic diagram
+dfd-beta showThreats             # with threat badges and table
+dfd-beta autonumber              # with auto-numbered flows
+dfd-beta showThreats autonumber  # both features enabled
+```
+
+### Title and Direction
+
+Use `title` to give the diagram a heading and `direction` to set the layout orientation.
+
+```
+title My System
+direction LR
+```
+
+Supported directions:
+
+| Value | Description   |
+| ----- | ------------- |
+| `LR`  | Left to right |
+| `RL`  | Right to left |
+| `TB`  | Top to bottom |
+| `BT`  | Bottom to top |
+
+### Elements
+
+Three element types are available, each declared with a unique ID and a quoted label:
+
+```
+external user "Web User"
+process api "API Service"
+datastore db "User Database"
+```
+
+| Keyword     | Shape             | Description                                |
+| ----------- | ----------------- | ------------------------------------------ |
+| `external`  | Rectangle         | An entity outside the system boundary      |
+| `process`   | Rounded rectangle | A process that transforms data             |
+| `datastore` | Cylinder          | A data store (database, file system, etc.) |
+
+### Trust Boundaries
+
+Trust boundaries group elements that share the same trust level. Use `boundary` with curly braces:
+
+```mermaid-example
+dfd-beta
+  direction LR
+
+  boundary frontend "Frontend" {
+    process ui "Web UI"
+  }
+
+  boundary backend "Backend" {
+    process api "API Server"
+    datastore db "Database"
+  }
+
+  ui -- "API call" --> api
+  api -- "query" --> db
+```
+
+```mermaid
+dfd-beta
+  direction LR
+
+  boundary frontend "Frontend" {
+    process ui "Web UI"
+  }
+
+  boundary backend "Backend" {
+    process api "API Server"
+    datastore db "Database"
+  }
+
+  ui -- "API call" --> api
+  api -- "query" --> db
+```
+
+Boundaries can be nested to represent layered security zones:
+
+```mermaid-example
+dfd-beta
+  direction LR
+
+  external user "User"
+
+  boundary network "Internal Network" {
+    boundary app_tier "Application Tier" {
+      process api "API Gateway"
+    }
+
+    boundary data_tier "Data Tier" {
+      datastore db "Database"
+    }
+  }
+
+  user -- "request" --> api
+  api -- "query" --> db
+```
+
+```mermaid
+dfd-beta
+  direction LR
+
+  external user "User"
+
+  boundary network "Internal Network" {
+    boundary app_tier "Application Tier" {
+      process api "API Gateway"
+    }
+
+    boundary data_tier "Data Tier" {
+      datastore db "Database"
+    }
+  }
+
+  user -- "request" --> api
+  api -- "query" --> db
+```
+
+### Data Flows
+
+Data flows show how information moves between elements. Use the arrow syntax `-- "label" -->`:
+
+```
+source -- "label" --> target
+```
+
+You can optionally assign a flow ID for referencing in threat statements:
+
+```
+f1: user -- "login request" --> api
+```
+
+### Flow Descriptions
+
+Add a multi-line description that appears as a tooltip when hovering over a flow label. Wrap the description in triple quotes (`"""`) on the line after the flow:
+
+```mermaid-example
+dfd-beta
+  direction LR
+
+  external user "User"
+  process api "API"
+  datastore db "Database"
+
+  user -- "request" --> api
+    """
+      User sends an authenticated HTTPS request
+      with a JWT bearer token in the Authorization header.
+    """
+  api -- "query" --> db
+```
+
+```mermaid
+dfd-beta
+  direction LR
+
+  external user "User"
+  process api "API"
+  datastore db "Database"
+
+  user -- "request" --> api
+    """
+      User sends an authenticated HTTPS request
+      with a JWT bearer token in the Authorization header.
+    """
+  api -- "query" --> db
+```
+
+### Auto-Numbering
+
+Enable `autonumber` to automatically label flows with sequential numbers. Use curly braces `{}` after a flow to create nested subsequences:
+
+```mermaid-example
+dfd-beta autonumber
+  direction LR
+
+  external client "Client"
+
+  boundary backend "Backend" {
+    process gw "API Gateway"
+    process auth "Auth Service"
+    process orders "Order Service"
+    datastore db "Database"
+  }
+
+  client -- "API request" --> gw {
+    gw -- "validate token" --> auth
+  }
+  gw -- "create order" --> orders {
+    orders -- "persist" --> db
+  }
+  orders -- "confirmation" --> gw
+  gw -- "response" --> client
+```
+
+```mermaid
+dfd-beta autonumber
+  direction LR
+
+  external client "Client"
+
+  boundary backend "Backend" {
+    process gw "API Gateway"
+    process auth "Auth Service"
+    process orders "Order Service"
+    datastore db "Database"
+  }
+
+  client -- "API request" --> gw {
+    gw -- "validate token" --> auth
+  }
+  gw -- "create order" --> orders {
+    orders -- "persist" --> db
+  }
+  orders -- "confirmation" --> gw
+  gw -- "response" --> client
+```
+
+Subsequences can be nested to any depth. In the example above:
+
+- Flow 1 ("API request") contains subsequence 1.1 ("validate token")
+- Flow 2 ("create order") contains subsequence 2.1 ("persist")
+- Flows 3 and 4 continue the top-level sequence
+
+### Threats (STRIDE)
+
+Enable `showThreats` to add STRIDE threat annotations. Each threat statement targets an element or flow ID:
+
+```
+threat <target> <category> "description" severity <level> status <status>
+```
+
+- **target** — The element ID or flow ID to annotate
+- **category** — One of the STRIDE categories (single letter)
+- **severity** — `low`, `medium`, `high`, or `critical` (optional)
+- **status** — `new`, `investigate`, `not-applicable`, or `mitigated` (optional, defaults to `new`)
+
+#### STRIDE Categories
+
+| Code | Emoji | Category               | Description                                  |
+| ---- | ----- | ---------------------- | -------------------------------------------- |
+| `S`  | 🎭    | Spoofing               | Pretending to be someone or something else   |
+| `T`  | 🔧    | Tampering              | Modifying data or code without authorization |
+| `R`  | 🙈    | Repudiation            | Denying having performed an action           |
+| `I`  | 🔓    | Information Disclosure | Exposing data to unauthorized parties        |
+| `D`  | 🚫    | Denial of Service      | Making a system unavailable                  |
+| `E`  | ⬆️    | Elevation of Privilege | Gaining unauthorized access or permissions   |
+
+```mermaid-example
+dfd-beta showThreats
+  title Payment System
+  direction LR
+
+  external customer "Customer"
+  external bank "Payment Gateway"
+
+  boundary app "Application" {
+    process gateway "API Gateway"
+    process payments "Payment Processor"
+  }
+
+  datastore orders "Order Database"
+
+  f1: customer -- "payment request" --> gateway
+  gateway -- "process" --> payments
+  payments -- "charge" --> bank
+  payments -- "store" --> orders
+
+  threat customer S "Identity spoofing" severity high status investigate
+  threat gateway D "DDoS attack" severity high status mitigated
+  threat f1 T "Man-in-the-middle" severity high status mitigated
+  threat orders I "Data breach" severity critical status new
+```
+
+```mermaid
+dfd-beta showThreats
+  title Payment System
+  direction LR
+
+  external customer "Customer"
+  external bank "Payment Gateway"
+
+  boundary app "Application" {
+    process gateway "API Gateway"
+    process payments "Payment Processor"
+  }
+
+  datastore orders "Order Database"
+
+  f1: customer -- "payment request" --> gateway
+  gateway -- "process" --> payments
+  payments -- "charge" --> bank
+  payments -- "store" --> orders
+
+  threat customer S "Identity spoofing" severity high status investigate
+  threat gateway D "DDoS attack" severity high status mitigated
+  threat f1 T "Man-in-the-middle" severity high status mitigated
+  threat orders I "Data breach" severity critical status new
+```
+
+When `showThreats` is enabled:
+
+- Colored STRIDE badges appear on each threatened element and flow
+- A threat summary table is rendered below the diagram with category, description, severity, and status
+
+## Full Example
+
+This example combines all features — boundaries, descriptions, auto-numbering, and STRIDE threats:
+
+```mermaid-example
+dfd-beta showThreats autonumber
+  title Secure File Upload
+  direction LR
+
+  external user "User"
+
+  boundary app "Application" {
+    process upload "Upload Service"
+    process scan "Virus Scanner"
+    process encrypt "Encryption Service"
+  }
+
+  boundary storage "Storage" {
+    datastore files "File Store"
+    datastore meta "Metadata DB"
+  }
+
+  user -- "upload file" --> upload {
+    upload -- "scan file" --> scan
+    upload -- "encrypt file" --> encrypt {
+      encrypt -- "store encrypted" --> files
+    }
+    upload -- "save metadata" --> meta
+  }
+  upload -- "upload result" --> user
+
+  threat user S "Impersonate another user" severity high status investigate
+  threat upload T "Malicious file upload" severity critical status new
+  threat upload D "Large file DoS" severity medium status mitigated
+  threat scan T "Scanner bypass via polyglot" severity high status investigate
+  threat files I "Unencrypted data at rest" severity critical status mitigated
+```
+
+```mermaid
+dfd-beta showThreats autonumber
+  title Secure File Upload
+  direction LR
+
+  external user "User"
+
+  boundary app "Application" {
+    process upload "Upload Service"
+    process scan "Virus Scanner"
+    process encrypt "Encryption Service"
+  }
+
+  boundary storage "Storage" {
+    datastore files "File Store"
+    datastore meta "Metadata DB"
+  }
+
+  user -- "upload file" --> upload {
+    upload -- "scan file" --> scan
+    upload -- "encrypt file" --> encrypt {
+      encrypt -- "store encrypted" --> files
+    }
+    upload -- "save metadata" --> meta
+  }
+  upload -- "upload result" --> user
+
+  threat user S "Impersonate another user" severity high status investigate
+  threat upload T "Malicious file upload" severity critical status new
+  threat upload D "Large file DoS" severity medium status mitigated
+  threat scan T "Scanner bypass via polyglot" severity high status investigate
+  threat files I "Unencrypted data at rest" severity critical status mitigated
+```
+
+## Syntax Summary
+
+| Element          | Syntax                                                                   |
+| ---------------- | ------------------------------------------------------------------------ |
+| Declaration      | `dfd-beta [showThreats] [autonumber]`                                    |
+| Title            | `title My Diagram`                                                       |
+| Direction        | `direction LR\|RL\|TB\|BT`                                               |
+| External entity  | `external id "label"`                                                    |
+| Process          | `process id "label"`                                                     |
+| Data store       | `datastore id "label"`                                                   |
+| Trust boundary   | `boundary id "label" { ... }`                                            |
+| Data flow        | `source -- "label" --> target`                                           |
+| Named flow       | `flowId: source -- "label" --> target`                                   |
+| Flow description | `"""multi-line description"""`                                           |
+| Subsequences     | `source -- "label" --> target { subflow1 subflow2 ... }`                 |
+| Threat           | `threat targetId CATEGORY "description" [severity level] [status value]` |
