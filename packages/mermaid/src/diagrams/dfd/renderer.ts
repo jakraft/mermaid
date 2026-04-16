@@ -3,12 +3,10 @@ import { log } from '../../logger.js';
 import { selectSvgElement } from '../../rendering-util/selectSvgElement.js';
 import { configureSvgSize } from '../../setupGraphViewbox.js';
 import { line, curveBasis } from 'd3';
+import ELK from 'elkjs/lib/elk.bundled.js';
 
-import { layout as dagreLayout } from 'dagre-d3-es/src/dagre/index.js';
-
-import * as graphlib from 'dagre-d3-es/src/graphlib/index.js';
 import type { DfdDB } from './db.js';
-import type { DfdElement } from './types.js';
+import type { DfdTrustBoundary } from './types.js';
 import { STRIDE_COLORS, STRIDE_EMOJIS, STRIDE_NAMES } from './types.js';
 
 // Layout constants
@@ -20,24 +18,56 @@ const BADGE_GAP = 3;
 const ARROW_HEAD_SIZE = 8;
 const TITLE_HEIGHT = 40;
 
-/** Map DFD direction to dagre rankdir */
-function toRankdir(dir: string): string {
+/** Map DFD direction to ELK direction */
+function toElkDirection(dir: string): string {
   switch (dir) {
     case 'LR':
-      return 'LR';
+      return 'RIGHT';
     case 'RL':
-      return 'RL';
+      return 'LEFT';
     case 'BT':
-      return 'BT';
+      return 'UP';
     default:
-      return 'TB';
+      return 'DOWN';
   }
 }
 
+interface ElkNode {
+  id: string;
+  width: number;
+  height: number;
+  children?: ElkNode[];
+  labels?: { text: string }[];
+  layoutOptions?: Record<string, unknown>;
+  // Populated after layout
+  x?: number;
+  y?: number;
+}
+
+interface ElkEdge {
+  id: string;
+  sources: string[];
+  targets: string[];
+  labels?: { text: string; width: number; height: number }[];
+  // Populated after layout
+  sections?: {
+    startPoint: { x: number; y: number };
+    endPoint: { x: number; y: number };
+    bendPoints?: { x: number; y: number }[];
+  }[];
+}
+
+interface ElkGraph {
+  id: string;
+  layoutOptions: Record<string, unknown>;
+  children: ElkNode[];
+  edges: ElkEdge[];
+}
+
 /**
- * Draw the DFD diagram using dagre for automatic layout.
+ * Draw the DFD diagram using ELK for automatic layout.
  */
-export const draw: DrawDefinition = (text, id, _version, diagObj) => {
+export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
   log.debug('rendering dfd diagram\n' + text);
   const db = diagObj.db as DfdDB;
   const svg: SVG = selectSvgElement(id);
@@ -50,61 +80,136 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
   const showThreats = db.getShowThreats();
   const title = db.getDiagramTitle();
 
-  // Build dagre graph
-  const graph = new graphlib.Graph({ multigraph: true, compound: true }).setGraph({
-    rankdir: toRankdir(direction),
-    nodesep: 60,
-    ranksep: 80,
-    marginx: BOUNDARY_PAD,
-    marginy: TITLE_HEIGHT + BOUNDARY_PAD,
-  });
-  graph.setDefaultEdgeLabel(() => ({}));
+  // Pre-compute element widths accounting for badges
+  const LABEL_CHAR_WIDTH = 8;
+  const LABEL_PAD = 20;
+  const BADGE_LABEL_GAP = 8;
 
-  // Add boundary nodes as compound parents
-  for (const [bId, boundary] of boundaries) {
-    graph.setNode(bId, {
-      label: boundary.label,
-      clusterLabelPos: 'top',
-      width: 0,
-      height: 0,
-    });
-    if (boundary.parentBoundaryId) {
-      graph.setParent(bId, boundary.parentBoundaryId);
-    }
-  }
-
-  // Pre-compute element widths accounting for badges to the right of the label
-  const LABEL_CHAR_WIDTH = 8; // approximate width per character
-  const LABEL_PAD = 20; // padding around label text
-  const BADGE_LABEL_GAP = 8; // gap between label and first badge
-
-  // Add element nodes — width includes label + badges
-  for (const [elId, el] of elements) {
+  function computeNodeWidth(elId: string, label: string): number {
     const elementThreats = threats.filter((t) => t.targetId === elId);
-    const labelWidth = el.label.length * LABEL_CHAR_WIDTH;
+    const labelWidth = label.length * LABEL_CHAR_WIDTH;
     const badgesWidth =
       elementThreats.length > 0
         ? BADGE_LABEL_GAP + elementThreats.length * (BADGE_SIZE + BADGE_GAP) - BADGE_GAP
         : 0;
-    const nodeWidth = Math.max(ELEMENT_WIDTH, labelWidth + badgesWidth + LABEL_PAD);
-    graph.setNode(elId, {
-      label: el.label,
-      width: nodeWidth,
-      height: ELEMENT_HEIGHT,
-    });
-    if (el.boundaryId) {
-      graph.setParent(elId, el.boundaryId);
+    return Math.max(ELEMENT_WIDTH, labelWidth + badgesWidth + LABEL_PAD);
+  }
+
+  // Build ELK graph with hierarchical structure
+  function buildBoundaryChildren(boundaryId: string, boundary: DfdTrustBoundary): ElkNode {
+    const children: ElkNode[] = [];
+
+    // Add child elements
+    for (const [elId, el] of elements) {
+      if (el.boundaryId === boundaryId) {
+        children.push({
+          id: elId,
+          width: computeNodeWidth(elId, el.label),
+          height: ELEMENT_HEIGHT,
+          labels: [{ text: el.label }],
+        });
+      }
+    }
+
+    // Add child boundaries (recursion)
+    for (const childBId of boundary.childBoundaryIds) {
+      const childBoundary = boundaries.get(childBId);
+      if (childBoundary) {
+        children.push(buildBoundaryChildren(childBId, childBoundary));
+      }
+    }
+
+    return {
+      id: boundaryId,
+      width: 0,
+      height: 0,
+      children,
+      labels: [{ text: boundary.label }],
+      layoutOptions: {
+        'elk.padding': '[top=35,left=15,bottom=15,right=15]',
+      },
+    };
+  }
+
+  // Build the root children array
+  const rootChildren: ElkNode[] = [];
+
+  // Add top-level boundaries (no parent)
+  for (const [bId, boundary] of boundaries) {
+    if (!boundary.parentBoundaryId) {
+      rootChildren.push(buildBoundaryChildren(bId, boundary));
     }
   }
 
-  // Add edges (flows) — use multigraph edge names for parallel edges
-  for (const flow of flows) {
-    const edgeName = flow.id ?? `flow-${flow.index}`;
-    graph.setEdge(flow.source, flow.target, { label: flow.label, flowIndex: flow.index }, edgeName);
+  // Add top-level elements (no boundary)
+  for (const [elId, el] of elements) {
+    if (!el.boundaryId) {
+      rootChildren.push({
+        id: elId,
+        width: computeNodeWidth(elId, el.label),
+        height: ELEMENT_HEIGHT,
+        labels: [{ text: el.label }],
+      });
+    }
   }
 
-  // Run dagre layout
-  dagreLayout(graph, undefined);
+  // Build edges
+  const elkEdges: ElkEdge[] = flows.map((flow) => ({
+    id: flow.id ?? `flow-${flow.index}`,
+    sources: [flow.source],
+    targets: [flow.target],
+  }));
+
+  const elkGraph: ElkGraph = {
+    id: 'root',
+    layoutOptions: {
+      'elk.algorithm': 'layered',
+      'elk.direction': toElkDirection(direction),
+      'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+      'spacing.baseValue': '40',
+      'elk.layered.mergeHierarchyEdges': 'true',
+      'elk.padding': `[top=${TITLE_HEIGHT + BOUNDARY_PAD},left=${BOUNDARY_PAD},bottom=${BOUNDARY_PAD},right=${BOUNDARY_PAD}]`,
+      'spacing.nodeNode': '60',
+      'spacing.nodeNodeBetweenLayers': '80',
+      'elk.layered.unnecessaryBendpoints': 'true',
+    },
+    children: rootChildren,
+    edges: elkEdges,
+  };
+
+  // Run ELK layout
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const elk = new (ELK as any)();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const layoutResult = await elk.layout(elkGraph as any);
+
+  // Build a lookup of positioned nodes (flatten hierarchy)
+  const nodePositions = new Map<string, { x: number; y: number; width: number; height: number }>();
+
+  function collectNodePositions(
+    nodes: ElkNode[] | undefined,
+    offsetX: number,
+    offsetY: number
+  ): void {
+    if (!nodes) {
+      return;
+    }
+    for (const node of nodes) {
+      const absX = (node.x ?? 0) + offsetX;
+      const absY = (node.y ?? 0) + offsetY;
+      nodePositions.set(node.id, {
+        x: absX,
+        y: absY,
+        width: node.width,
+        height: node.height,
+      });
+      if (node.children) {
+        collectNodePositions(node.children, absX, absY);
+      }
+    }
+  }
+
+  collectNodePositions(layoutResult.children as ElkNode[], 0, 0);
 
   // Define arrow markers
   const defs = svg.append('defs');
@@ -128,41 +233,40 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
     diagramGroup.append('text').attr('class', 'dfd-title').attr('x', 0).attr('y', 25).text(title);
   }
 
-  // Draw boundaries — dagre sets x/y/width/height on compound nodes
+  // Draw boundaries
   for (const [bId, boundary] of boundaries) {
-    const bNode = graph.node(bId);
-    if (!bNode) {
+    const pos = nodePositions.get(bId);
+    if (!pos) {
       continue;
     }
-    // dagre gives center-based coords for compound nodes
-    const bx = bNode.x - bNode.width / 2;
-    const by = bNode.y - bNode.height / 2;
 
     const group = diagramGroup.append('g').attr('class', 'dfd-boundary');
 
     group
       .append('rect')
-      .attr('x', bx)
-      .attr('y', by)
-      .attr('width', bNode.width)
-      .attr('height', bNode.height)
+      .attr('x', pos.x)
+      .attr('y', pos.y)
+      .attr('width', pos.width)
+      .attr('height', pos.height)
       .attr('data-boundary-id', bId);
 
     group
       .append('text')
-      .attr('x', bx + 8)
-      .attr('y', by + 16)
+      .attr('x', pos.x + 8)
+      .attr('y', pos.y + 16)
       .text(boundary.label);
   }
 
-  // Draw elements — dagre gives center-based x/y
+  // Draw elements — ELK gives top-left x/y
   for (const [elId, el] of elements) {
-    const elNode = graph.node(elId);
-    if (!elNode) {
+    const pos = nodePositions.get(elId);
+    if (!pos) {
       continue;
     }
-    const nx = elNode.x - elNode.width / 2;
-    const ny = elNode.y - elNode.height / 2;
+    const nx = pos.x;
+    const ny = pos.y;
+    const cx = nx + pos.width / 2;
+    const cy = ny + pos.height / 2;
 
     const group = diagramGroup
       .append('g')
@@ -174,33 +278,31 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
         .append('rect')
         .attr('x', nx)
         .attr('y', ny)
-        .attr('width', elNode.width)
-        .attr('height', elNode.height);
+        .attr('width', pos.width)
+        .attr('height', pos.height);
     } else if (el.type === 'process') {
       group
         .append('rect')
         .attr('x', nx)
         .attr('y', ny)
-        .attr('width', elNode.width)
-        .attr('height', elNode.height)
+        .attr('width', pos.width)
+        .attr('height', pos.height)
         .attr('rx', 10)
         .attr('ry', 10);
     } else if (el.type === 'datastore') {
-      const ry = 8; // ellipse vertical radius for cylinder caps
+      const ry = 8;
       const topY = ny + ry;
-      const bottomY = ny + elNode.height - ry;
-      const halfW = elNode.width / 2;
+      const bottomY = ny + pos.height - ry;
+      const halfW = pos.width / 2;
 
-      // White fill for the body area (no stroke)
       group
         .append('rect')
         .attr('class', 'ds-body')
         .attr('x', nx)
         .attr('y', topY)
-        .attr('width', elNode.width)
+        .attr('width', pos.width)
         .attr('height', bottomY - topY);
 
-      // Left side line
       group
         .append('line')
         .attr('class', 'ds-side')
@@ -209,55 +311,50 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
         .attr('x2', nx)
         .attr('y2', bottomY);
 
-      // Right side line
       group
         .append('line')
         .attr('class', 'ds-side')
-        .attr('x1', nx + elNode.width)
+        .attr('x1', nx + pos.width)
         .attr('y1', topY)
-        .attr('x2', nx + elNode.width)
+        .attr('x2', nx + pos.width)
         .attr('y2', bottomY);
 
-      // Bottom half-ellipse arc (only the bottom curve)
       group
         .append('path')
         .attr('class', 'ds-bottom-cap')
-        .attr('d', `M ${nx},${bottomY} A ${halfW},${ry} 0 0,0 ${nx + elNode.width},${bottomY}`);
+        .attr('d', `M ${nx},${bottomY} A ${halfW},${ry} 0 0,0 ${nx + pos.width},${bottomY}`);
 
-      // Top ellipse (full)
       group
         .append('ellipse')
         .attr('class', 'ds-top-cap')
-        .attr('cx', elNode.x)
+        .attr('cx', cx)
         .attr('cy', topY)
         .attr('rx', halfW)
         .attr('ry', ry);
     }
 
-    // Element label + threat badges — label left-of-center, badges to its right
+    // Element label + threat badges
     const elementThreats = threats.filter((t) => t.targetId === elId);
     const badgesWidth =
       elementThreats.length > 0
         ? 8 + elementThreats.length * (BADGE_SIZE + BADGE_GAP) - BADGE_GAP
         : 0;
 
-    // Center the label+badges group within the element
-    // For datastores, shift down slightly to account for the top ellipse cap
     const labelYOffset = el.type === 'datastore' ? 4 : 0;
-    const labelX = elNode.x - badgesWidth / 2;
+    const labelX = cx - badgesWidth / 2;
     group
       .append('text')
       .attr('x', labelX)
-      .attr('y', elNode.y + labelYOffset)
+      .attr('y', cy + labelYOffset)
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'central')
       .text(el.label);
 
     // Draw threat badges to the right of the label
     if (elementThreats.length > 0) {
-      const labelHalfWidth = (el.label.length * 8) / 2; // approximate
+      const labelHalfWidth = (el.label.length * 8) / 2;
       const badgeStartX = labelX + labelHalfWidth + 8;
-      const badgeY = elNode.y + labelYOffset - BADGE_SIZE / 2;
+      const badgeY = cy + labelYOffset - BADGE_SIZE / 2;
 
       for (const [i, threat] of elementThreats.entries()) {
         const isFaded = threat.status === 'mitigated' || threat.status === 'not-applicable';
@@ -288,7 +385,7 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
     }
   }
 
-  // Draw flows using dagre edge points
+  // Draw flows using ELK edge sections
   const curvedLine = line<[number, number]>()
     .x((d) => d[0])
     .y((d) => d[1])
@@ -297,17 +394,63 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
   // Collect label data for a second pass (rendered on top)
   const flowLabels: { x: number; y: number; text: string; description?: string }[] = [];
 
+  // Build edge lookup from ELK result (edges live on the root or inside subgraphs)
+  const edgeSections = new Map<
+    string,
+    {
+      startPoint: { x: number; y: number };
+      endPoint: { x: number; y: number };
+      bendPoints?: { x: number; y: number }[];
+    }
+  >();
+
+  function collectEdgeSections(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    graph: any,
+    offsetX: number,
+    offsetY: number
+  ): void {
+    if (graph.edges) {
+      for (const edge of graph.edges) {
+        if (edge.sections?.[0]) {
+          const s = edge.sections[0];
+          edgeSections.set(edge.id, {
+            startPoint: { x: s.startPoint.x + offsetX, y: s.startPoint.y + offsetY },
+            endPoint: { x: s.endPoint.x + offsetX, y: s.endPoint.y + offsetY },
+            bendPoints: s.bendPoints?.map((p: { x: number; y: number }) => ({
+              x: p.x + offsetX,
+              y: p.y + offsetY,
+            })),
+          });
+        }
+      }
+    }
+    if (graph.children) {
+      for (const child of graph.children) {
+        if (child.children || child.edges) {
+          const childX = (child.x ?? 0) + offsetX;
+          const childY = (child.y ?? 0) + offsetY;
+          collectEdgeSections(child, childX, childY);
+        }
+      }
+    }
+  }
+
+  collectEdgeSections(layoutResult, 0, 0);
+
   for (const flow of flows) {
     const edgeName = flow.id ?? `flow-${flow.index}`;
-    const edgeObj = graph.edge({ v: flow.source, w: flow.target, name: edgeName });
-    if (!edgeObj?.points) {
-      log.warn(`No edge points for flow: ${flow.source} -> ${flow.target}`);
+    const section = edgeSections.get(edgeName);
+    if (!section) {
+      log.warn(`No edge sections for flow: ${flow.source} -> ${flow.target}`);
       continue;
     }
 
-    const points: [number, number][] = edgeObj.points.map(
-      (p: { x: number; y: number }) => [p.x, p.y] as [number, number]
-    );
+    const points: [number, number][] = [
+      [section.startPoint.x, section.startPoint.y],
+      ...(section.bendPoints?.map((p) => [p.x, p.y] as [number, number]) ?? []),
+      [section.endPoint.x, section.endPoint.y],
+    ];
 
     const flowGroup = diagramGroup
       .append('g')
@@ -321,12 +464,12 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
       .attr('marker-end', `url(#${id}-arrowhead)`);
 
     // Collect label for top-layer rendering
-    const midIdx = Math.floor(edgeObj.points.length / 2);
-    const midPoint = edgeObj.points[midIdx];
+    const midIdx = Math.floor(points.length / 2);
+    const midPoint = points[midIdx];
     const displayLabel = flow.numberLabel ? `${flow.numberLabel}. ${flow.label}` : flow.label;
     flowLabels.push({
-      x: midPoint.x,
-      y: midPoint.y - 8,
+      x: midPoint[0],
+      y: midPoint[1] - 8,
       text: displayLabel,
       description: flow.description,
     });
@@ -334,8 +477,8 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
     // Draw threat badges on flows
     const flowThreats = threats.filter((t) => t.targetId === flow.id);
     if (flowThreats.length > 0) {
-      const badgeStartX = midPoint.x - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
-      const badgeY = midPoint.y + 4;
+      const badgeStartX = midPoint[0] - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
+      const badgeY = midPoint[1] + 4;
 
       for (const [i, threat] of flowThreats.entries()) {
         const isFaded = threat.status === 'mitigated' || threat.status === 'not-applicable';
@@ -381,8 +524,8 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
       .text(label.text);
   }
 
-  // Compute graph bounds and width first
-  const bounds = getGraphBounds(graph, elements, boundaries);
+  // Compute graph bounds from positioned nodes
+  const bounds = getGraphBounds(nodePositions);
   const TABLE_MIN_WIDTH = 1000;
   const hasTable = showThreats && threats.length > 0;
   const totalWidth = Math.max(bounds.maxX + BOUNDARY_PAD, hasTable ? TABLE_MIN_WIDTH : 0, 400);
@@ -472,25 +615,15 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
   configureSvgSize(svg, totalHeight, totalWidth, true);
 };
 
-/** Compute bounding box from dagre-laid-out graph nodes */
-
+/** Compute bounding box from ELK-positioned nodes */
 function getGraphBounds(
-  graph: any,
-  elements: Map<string, DfdElement>,
-  boundaries: Map<string, unknown>
+  nodePositions: Map<string, { x: number; y: number; width: number; height: number }>
 ): { maxX: number; maxY: number } {
   let maxX = 0;
   let maxY = 0;
-  for (const nodeId of graph.nodes()) {
-    // Only measure elements and boundaries, not internal dagre artifacts
-    if (!elements.has(nodeId) && !boundaries.has(nodeId)) {
-      continue;
-    }
-    const node = graph.node(nodeId);
-    if (node) {
-      maxX = Math.max(maxX, node.x + node.width / 2);
-      maxY = Math.max(maxY, node.y + node.height / 2);
-    }
+  for (const pos of nodePositions.values()) {
+    maxX = Math.max(maxX, pos.x + pos.width);
+    maxY = Math.max(maxY, pos.y + pos.height);
   }
   return { maxX, maxY };
 }
