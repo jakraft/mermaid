@@ -17,7 +17,6 @@ const BADGE_SIZE = 16;
 const BADGE_GAP = 3;
 const ARROW_HEAD_SIZE = 8;
 const TITLE_HEIGHT = 40;
-const LABEL_CHAR_WIDTH = 7;
 const LABEL_HEIGHT = 14;
 
 /** Map DFD direction to ELK direction */
@@ -74,14 +73,14 @@ const ELK_BASE_OPTIONS: Record<string, string> = {
   'elk.algorithm': 'layered',
   'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
   // Node spacing
-  'spacing.nodeNode': '80',
-  'spacing.nodeNodeBetweenLayers': '140',
-  // Edge spacing — room for flow labels between parallel edges
-  'spacing.edgeEdge': '35',
-  'spacing.edgeEdgeBetweenLayers': '35',
-  'spacing.edgeNode': '40',
-  'spacing.edgeNodeBetweenLayers': '35',
-  'spacing.nodeSelfLoop': '50',
+  'spacing.nodeNode': '60',
+  'spacing.nodeNodeBetweenLayers': '100',
+  // Edge spacing
+  'spacing.edgeEdge': '25',
+  'spacing.edgeEdgeBetweenLayers': '25',
+  'spacing.edgeNode': '30',
+  'spacing.edgeNodeBetweenLayers': '25',
+  'spacing.nodeSelfLoop': '40',
   // Edge routing — splines produce smooth curves for backward edges
   'elk.layered.edgeRouting': 'SPLINES',
   'elk.layered.edgeRouting.selfLoopDistribution': 'EQUALLY',
@@ -90,8 +89,6 @@ const ELK_BASE_OPTIONS: Record<string, string> = {
   'nodePlacement.strategy': 'NETWORK_SIMPLEX',
   // Node ordering — respect declaration order for predictable layouts
   'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
-  // Edge labels positioned by ELK
-  'elk.edgeLabels.placement': 'CENTER',
 };
 
 /** Compute total edge path length for a laid-out graph (used for auto-direction) */
@@ -222,18 +219,10 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
 
   // Build edges with labels so ELK can space them properly
   const elkEdges: ElkEdge[] = flows.map((flow) => {
-    const displayLabel = flow.numberLabel ? `${flow.numberLabel}. ${flow.label}` : flow.label;
     return {
       id: flow.id ?? `flow-${flow.index}`,
       sources: [flow.source],
       targets: [flow.target],
-      labels: [
-        {
-          text: displayLabel,
-          width: displayLabel.length * LABEL_CHAR_WIDTH + 8,
-          height: LABEL_HEIGHT,
-        },
-      ],
     };
   });
 
@@ -497,7 +486,6 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       startPoint: { x: number; y: number };
       endPoint: { x: number; y: number };
       bendPoints?: { x: number; y: number }[];
-      labelPos?: { x: number; y: number };
     }
   >();
 
@@ -526,15 +514,6 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
         const containerId = edge.container ?? 'root';
         const offset = containerOffsets.get(containerId) ?? { x: 0, y: 0 };
 
-        // Extract ELK-positioned label if available
-        let labelPos: { x: number; y: number } | undefined;
-        if (edge.labels?.[0]?.x !== undefined) {
-          labelPos = {
-            x: edge.labels[0].x + offset.x + (edge.labels[0].width ?? 0) / 2,
-            y: edge.labels[0].y + offset.y,
-          };
-        }
-
         edgeSections.set(edge.id, {
           startPoint: { x: s.startPoint.x + offset.x, y: s.startPoint.y + offset.y },
           endPoint: { x: s.endPoint.x + offset.x, y: s.endPoint.y + offset.y },
@@ -542,7 +521,6 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
             x: p.x + offset.x,
             y: p.y + offset.y,
           })),
-          labelPos,
         });
       }
     }
@@ -573,40 +551,21 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       .attr('fill', 'none')
       .attr('marker-end', `url(#${id}-arrowhead)`);
 
-    // Use ELK-positioned label if available, otherwise fall back to path midpoint
+    // Place label at path midpoint
     const displayLabel = flow.numberLabel ? `${flow.numberLabel}. ${flow.label}` : flow.label;
-    if (section.labelPos) {
-      flowLabels.push({
-        x: section.labelPos.x,
-        y: section.labelPos.y,
-        text: displayLabel,
-        description: flow.description,
-      });
-    } else {
-      const pathMid = pathMidpoint(points);
-      flowLabels.push({
-        x: pathMid[0],
-        y: pathMid[1] - 8,
-        text: displayLabel,
-        description: flow.description,
-      });
-    }
+    const pathMid = pathMidpoint(points);
+    flowLabels.push({
+      x: pathMid[0],
+      y: pathMid[1] - 8,
+      text: displayLabel,
+      description: flow.description,
+    });
 
     // Draw threat badges on flows
-    let badgeX: number;
-    let badgeBaseY: number;
-    if (section.labelPos) {
-      badgeX = section.labelPos.x;
-      badgeBaseY = section.labelPos.y;
-    } else {
-      const mid = pathMidpoint(points);
-      badgeX = mid[0];
-      badgeBaseY = mid[1];
-    }
     const flowThreats = threats.filter((t) => t.targetId === flow.id);
     if (flowThreats.length > 0) {
-      const badgeStartX = badgeX - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
-      const badgeY = badgeBaseY + LABEL_HEIGHT + 2;
+      const badgeStartX = pathMid[0] - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
+      const badgeY = pathMid[1] + LABEL_HEIGHT + 2;
 
       for (const [i, threat] of flowThreats.entries()) {
         const isFaded = threat.status === 'mitigated' || threat.status === 'not-applicable';
