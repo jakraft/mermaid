@@ -17,6 +17,8 @@ const BADGE_SIZE = 16;
 const BADGE_GAP = 3;
 const ARROW_HEAD_SIZE = 8;
 const TITLE_HEIGHT = 40;
+const LABEL_CHAR_WIDTH = 7;
+const LABEL_HEIGHT = 14;
 
 /** Map DFD direction to ELK direction */
 function toElkDirection(dir: string): string {
@@ -30,37 +32,6 @@ function toElkDirection(dir: string): string {
     default:
       return 'DOWN';
   }
-}
-
-/** Find the point at the geometric midpoint along a polyline path */
-function pathMidpoint(points: [number, number][]): [number, number] {
-  if (points.length === 0) {
-    return [0, 0];
-  }
-  if (points.length === 1) {
-    return points[0];
-  }
-  // Compute total path length
-  let totalLen = 0;
-  for (let i = 1; i < points.length; i++) {
-    const dx = points[i][0] - points[i - 1][0];
-    const dy = points[i][1] - points[i - 1][1];
-    totalLen += Math.sqrt(dx * dx + dy * dy);
-  }
-  // Walk along the path to the midpoint
-  const halfLen = totalLen / 2;
-  let walked = 0;
-  for (let i = 1; i < points.length; i++) {
-    const dx = points[i][0] - points[i - 1][0];
-    const dy = points[i][1] - points[i - 1][1];
-    const segLen = Math.sqrt(dx * dx + dy * dy);
-    if (walked + segLen >= halfLen && segLen > 0) {
-      const t = (halfLen - walked) / segLen;
-      return [points[i - 1][0] + dx * t, points[i - 1][1] + dy * t];
-    }
-    walked += segLen;
-  }
-  return points[points.length - 1];
 }
 
 interface ElkNode {
@@ -79,13 +50,16 @@ interface ElkEdge {
   id: string;
   sources: string[];
   targets: string[];
-  labels?: { text: string; width: number; height: number }[];
+  labels?: { text: string; width: number; height: number; x?: number; y?: number }[];
+  layoutOptions?: Record<string, unknown>;
   // Populated after layout
   sections?: {
     startPoint: { x: number; y: number };
     endPoint: { x: number; y: number };
     bendPoints?: { x: number; y: number }[];
   }[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  container?: any;
 }
 
 interface ElkGraph {
@@ -93,6 +67,72 @@ interface ElkGraph {
   layoutOptions: Record<string, unknown>;
   children: ElkNode[];
   edges: ElkEdge[];
+}
+
+/** Shared ELK layout options (direction-independent) */
+const ELK_BASE_OPTIONS: Record<string, string> = {
+  'elk.algorithm': 'layered',
+  'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+  // Node spacing
+  'spacing.nodeNode': '80',
+  'spacing.nodeNodeBetweenLayers': '140',
+  // Edge spacing — room for flow labels between parallel edges
+  'spacing.edgeEdge': '35',
+  'spacing.edgeEdgeBetweenLayers': '35',
+  'spacing.edgeNode': '40',
+  'spacing.edgeNodeBetweenLayers': '35',
+  'spacing.nodeSelfLoop': '50',
+  // Edge routing — splines produce smooth curves for backward edges
+  'elk.layered.edgeRouting': 'SPLINES',
+  'elk.layered.edgeRouting.selfLoopDistribution': 'EQUALLY',
+  'elk.layered.mergeHierarchyEdges': 'true',
+  // Node placement — NETWORK_SIMPLEX minimizes total edge length
+  'nodePlacement.strategy': 'NETWORK_SIMPLEX',
+  // Node ordering — respect declaration order for predictable layouts
+  'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+  // Edge labels positioned by ELK
+  'elk.edgeLabels.placement': 'CENTER',
+};
+
+/** Compute total edge path length for a laid-out graph (used for auto-direction) */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function computeTotalEdgeLength(result: any): number {
+  const offsets = new Map<string, { x: number; y: number }>();
+  offsets.set('root', { x: 0, y: 0 });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function buildOffsets(nodes: any[], px: number, py: number): void {
+    for (const n of nodes) {
+      const ax = px + (n.x ?? 0);
+      const ay = py + (n.y ?? 0);
+      offsets.set(n.id, { x: ax, y: ay });
+      if (n.children) {
+        buildOffsets(n.children, ax, ay);
+      }
+    }
+  }
+  if (result.children) {
+    buildOffsets(result.children, 0, 0);
+  }
+  let total = 0;
+  for (const edge of result.edges ?? []) {
+    if (edge.sections?.[0]) {
+      const s = edge.sections[0];
+      const c = edge.container ?? 'root';
+      const off = offsets.get(c) ?? { x: 0, y: 0 };
+      const pts = [
+        { x: s.startPoint.x + off.x, y: s.startPoint.y + off.y },
+        ...(s.bendPoints ?? []).map((p: { x: number; y: number }) => ({
+          x: p.x + off.x,
+          y: p.y + off.y,
+        })),
+        { x: s.endPoint.x + off.x, y: s.endPoint.y + off.y },
+      ];
+      for (let i = 1; i < pts.length; i++) {
+        total += Math.sqrt((pts[i].x - pts[i - 1].x) ** 2 + (pts[i].y - pts[i - 1].y) ** 2);
+      }
+    }
+  }
+  return total;
 }
 
 /**
@@ -112,13 +152,13 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
   const title = db.getDiagramTitle();
 
   // Pre-compute element widths accounting for badges
-  const LABEL_CHAR_WIDTH = 8;
+  const NODE_LABEL_CHAR_WIDTH = 8;
   const LABEL_PAD = 20;
   const BADGE_LABEL_GAP = 8;
 
   function computeNodeWidth(elId: string, label: string): number {
     const elementThreats = threats.filter((t) => t.targetId === elId);
-    const labelWidth = label.length * LABEL_CHAR_WIDTH;
+    const labelWidth = label.length * NODE_LABEL_CHAR_WIDTH;
     const badgesWidth =
       elementThreats.length > 0
         ? BADGE_LABEL_GAP + elementThreats.length * (BADGE_SIZE + BADGE_GAP) - BADGE_GAP
@@ -130,7 +170,6 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
   function buildBoundaryChildren(boundaryId: string, boundary: DfdTrustBoundary): ElkNode {
     const children: ElkNode[] = [];
 
-    // Add child elements
     for (const [elId, el] of elements) {
       if (el.boundaryId === boundaryId) {
         children.push({
@@ -142,7 +181,6 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       }
     }
 
-    // Add child boundaries (recursion)
     for (const childBId of boundary.childBoundaryIds) {
       const childBoundary = boundaries.get(childBId);
       if (childBoundary) {
@@ -165,14 +203,12 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
   // Build the root children array
   const rootChildren: ElkNode[] = [];
 
-  // Add top-level boundaries (no parent)
   for (const [bId, boundary] of boundaries) {
     if (!boundary.parentBoundaryId) {
       rootChildren.push(buildBoundaryChildren(bId, boundary));
     }
   }
 
-  // Add top-level elements (no boundary)
   for (const [elId, el] of elements) {
     if (!el.boundaryId) {
       rootChildren.push({
@@ -184,47 +220,61 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
     }
   }
 
-  // Build edges
-  const elkEdges: ElkEdge[] = flows.map((flow) => ({
-    id: flow.id ?? `flow-${flow.index}`,
-    sources: [flow.source],
-    targets: [flow.target],
-  }));
+  // Build edges with labels so ELK can space them properly
+  const elkEdges: ElkEdge[] = flows.map((flow) => {
+    const displayLabel = flow.numberLabel ? `${flow.numberLabel}. ${flow.label}` : flow.label;
+    return {
+      id: flow.id ?? `flow-${flow.index}`,
+      sources: [flow.source],
+      targets: [flow.target],
+      labels: [
+        {
+          text: displayLabel,
+          width: displayLabel.length * LABEL_CHAR_WIDTH + 8,
+          height: LABEL_HEIGHT,
+        },
+      ],
+    };
+  });
 
-  const elkGraph: ElkGraph = {
-    id: 'root',
-    layoutOptions: {
-      'elk.algorithm': 'layered',
-      'elk.direction': toElkDirection(direction),
-      'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-      'elk.padding': `[top=${TITLE_HEIGHT + BOUNDARY_PAD},left=${BOUNDARY_PAD},bottom=${BOUNDARY_PAD},right=${BOUNDARY_PAD}]`,
-      // Node spacing
-      'spacing.nodeNode': '80',
-      'spacing.nodeNodeBetweenLayers': '140',
-      // Edge spacing — room for flow labels between parallel edges
-      'spacing.edgeEdge': '35',
-      'spacing.edgeEdgeBetweenLayers': '35',
-      'spacing.edgeNode': '40',
-      'spacing.edgeNodeBetweenLayers': '35',
-      'spacing.nodeSelfLoop': '50',
-      // Edge routing — splines produce smooth curves for backward edges
-      'elk.layered.edgeRouting': 'SPLINES',
-      'elk.layered.edgeRouting.selfLoopDistribution': 'EQUALLY',
-      'elk.layered.mergeHierarchyEdges': 'true',
-      // Node placement — NETWORK_SIMPLEX minimizes total edge length
-      'nodePlacement.strategy': 'NETWORK_SIMPLEX',
-      // Node ordering — respect declaration order for predictable layouts
-      'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
-    },
-    children: rootChildren,
-    edges: elkEdges,
-  };
+  // Build the ELK graph (direction filled in below)
+  function buildElkGraph(elkDirection: string): ElkGraph {
+    return {
+      id: 'root',
+      layoutOptions: {
+        ...ELK_BASE_OPTIONS,
+        'elk.direction': elkDirection,
+        'elk.padding': `[top=${TITLE_HEIGHT + BOUNDARY_PAD},left=${BOUNDARY_PAD},bottom=${BOUNDARY_PAD},right=${BOUNDARY_PAD}]`,
+      },
+      children: JSON.parse(JSON.stringify(rootChildren)),
+      edges: JSON.parse(JSON.stringify(elkEdges)),
+    };
+  }
 
-  // Run ELK layout
+  // Run ELK layout — auto-detect best direction if not specified
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const elk = new (ELK as any)();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const layoutResult = await elk.layout(elkGraph as any);
+  let layoutResult: any;
+
+  if (direction === 'auto') {
+    // Try both horizontal and vertical, pick the one with shorter total edge length
+    const [resultRight, resultDown] = await Promise.all([
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      elk.layout(buildElkGraph('RIGHT') as any),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      elk.layout(buildElkGraph('DOWN') as any),
+    ]);
+    const lenRight = computeTotalEdgeLength(resultRight);
+    const lenDown = computeTotalEdgeLength(resultDown);
+    layoutResult = lenDown <= lenRight ? resultDown : resultRight;
+    log.debug(
+      `Auto-direction: RIGHT=${Math.round(lenRight)} DOWN=${Math.round(lenDown)} → ${lenDown <= lenRight ? 'DOWN' : 'RIGHT'}`
+    );
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    layoutResult = await elk.layout(buildElkGraph(toElkDirection(direction)) as any);
+  }
 
   // Build a lookup of positioned nodes (flatten hierarchy)
   const nodePositions = new Map<string, { x: number; y: number; width: number; height: number }>();
@@ -440,19 +490,18 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
   // Build edge lookup from ELK result.
   // With INCLUDE_CHILDREN, all edges stay in the root edges array but ELK sets
   // a `container` property indicating which graph element's coordinate system
-  // the edge section coordinates are relative to. We use the already-computed
-  // nodePositions (which store the top-left absolute position of each boundary)
-  // to translate edge coordinates to absolute.
+  // the edge section coordinates are relative to.
   const edgeSections = new Map<
     string,
     {
       startPoint: { x: number; y: number };
       endPoint: { x: number; y: number };
       bendPoints?: { x: number; y: number }[];
+      labelPos?: { x: number; y: number };
     }
   >();
 
-  // Build a map of boundary absolute top-left positions for container offset lookup
+  // Build container offset map for translating relative coordinates to absolute
   const containerOffsets = new Map<string, { x: number; y: number }>();
   containerOffsets.set('root', { x: 0, y: 0 });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -476,6 +525,16 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
         const s = edge.sections[0];
         const containerId = edge.container ?? 'root';
         const offset = containerOffsets.get(containerId) ?? { x: 0, y: 0 };
+
+        // Extract ELK-positioned label if available
+        let labelPos: { x: number; y: number } | undefined;
+        if (edge.labels?.[0]?.x !== undefined) {
+          labelPos = {
+            x: edge.labels[0].x + offset.x + (edge.labels[0].width ?? 0) / 2,
+            y: edge.labels[0].y + offset.y,
+          };
+        }
+
         edgeSections.set(edge.id, {
           startPoint: { x: s.startPoint.x + offset.x, y: s.startPoint.y + offset.y },
           endPoint: { x: s.endPoint.x + offset.x, y: s.endPoint.y + offset.y },
@@ -483,6 +542,7 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
             x: p.x + offset.x,
             y: p.y + offset.y,
           })),
+          labelPos,
         });
       }
     }
@@ -513,21 +573,40 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       .attr('fill', 'none')
       .attr('marker-end', `url(#${id}-arrowhead)`);
 
-    // Compute label position at the geometric midpoint of the edge path
-    const pathMid = pathMidpoint(points);
+    // Use ELK-positioned label if available, otherwise fall back to path midpoint
     const displayLabel = flow.numberLabel ? `${flow.numberLabel}. ${flow.label}` : flow.label;
-    flowLabels.push({
-      x: pathMid[0],
-      y: pathMid[1] - 8,
-      text: displayLabel,
-      description: flow.description,
-    });
+    if (section.labelPos) {
+      flowLabels.push({
+        x: section.labelPos.x,
+        y: section.labelPos.y,
+        text: displayLabel,
+        description: flow.description,
+      });
+    } else {
+      const pathMid = pathMidpoint(points);
+      flowLabels.push({
+        x: pathMid[0],
+        y: pathMid[1] - 8,
+        text: displayLabel,
+        description: flow.description,
+      });
+    }
 
     // Draw threat badges on flows
+    let badgeX: number;
+    let badgeBaseY: number;
+    if (section.labelPos) {
+      badgeX = section.labelPos.x;
+      badgeBaseY = section.labelPos.y;
+    } else {
+      const mid = pathMidpoint(points);
+      badgeX = mid[0];
+      badgeBaseY = mid[1];
+    }
     const flowThreats = threats.filter((t) => t.targetId === flow.id);
     if (flowThreats.length > 0) {
-      const badgeStartX = pathMid[0] - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
-      const badgeY = pathMid[1] + 4;
+      const badgeStartX = badgeX - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
+      const badgeY = badgeBaseY + LABEL_HEIGHT + 2;
 
       for (const [i, threat] of flowThreats.entries()) {
         const isFaded = threat.status === 'mitigated' || threat.status === 'not-applicable';
@@ -573,8 +652,8 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       .text(label.text);
   }
 
-  // Compute graph bounds from positioned nodes
-  const bounds = getGraphBounds(nodePositions);
+  // Compute graph bounds from positioned nodes AND edge sections
+  const bounds = getGraphBounds(nodePositions, edgeSections);
   const TABLE_MIN_WIDTH = 1000;
   const hasTable = showThreats && threats.length > 0;
   const totalWidth = Math.max(bounds.maxX + BOUNDARY_PAD, hasTable ? TABLE_MIN_WIDTH : 0, 400);
@@ -664,15 +743,58 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
   configureSvgSize(svg, totalHeight, totalWidth, true);
 };
 
-/** Compute bounding box from ELK-positioned nodes */
+/** Find the point at the geometric midpoint along a polyline path */
+function pathMidpoint(points: [number, number][]): [number, number] {
+  if (points.length <= 1) {
+    return points[0] ?? [0, 0];
+  }
+  let totalLen = 0;
+  for (let i = 1; i < points.length; i++) {
+    const dx = points[i][0] - points[i - 1][0];
+    const dy = points[i][1] - points[i - 1][1];
+    totalLen += Math.sqrt(dx * dx + dy * dy);
+  }
+  const halfLen = totalLen / 2;
+  let walked = 0;
+  for (let i = 1; i < points.length; i++) {
+    const dx = points[i][0] - points[i - 1][0];
+    const dy = points[i][1] - points[i - 1][1];
+    const segLen = Math.sqrt(dx * dx + dy * dy);
+    if (walked + segLen >= halfLen && segLen > 0) {
+      const t = (halfLen - walked) / segLen;
+      return [points[i - 1][0] + dx * t, points[i - 1][1] + dy * t];
+    }
+    walked += segLen;
+  }
+  return points[points.length - 1];
+}
+
+/** Compute bounding box from ELK-positioned nodes AND edge sections */
 function getGraphBounds(
-  nodePositions: Map<string, { x: number; y: number; width: number; height: number }>
+  nodePositions: Map<string, { x: number; y: number; width: number; height: number }>,
+  edgeSections: Map<
+    string,
+    {
+      startPoint: { x: number; y: number };
+      endPoint: { x: number; y: number };
+      bendPoints?: { x: number; y: number }[];
+    }
+  >
 ): { maxX: number; maxY: number } {
   let maxX = 0;
   let maxY = 0;
+  // Node bounds
   for (const pos of nodePositions.values()) {
     maxX = Math.max(maxX, pos.x + pos.width);
     maxY = Math.max(maxY, pos.y + pos.height);
+  }
+  // Edge bounds — include all edge points to prevent arrow cutoff
+  for (const section of edgeSections.values()) {
+    const allPoints = [section.startPoint, ...(section.bendPoints ?? []), section.endPoint];
+    for (const p of allPoints) {
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
   }
   return { maxX, maxY };
 }

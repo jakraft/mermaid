@@ -1,7 +1,7 @@
 export type StrideCategory = 'S' | 'T' | 'R' | 'I' | 'D' | 'E';
 export type SeverityLevel = 'low' | 'medium' | 'high' | 'critical';
 export type ThreatStatus = 'new' | 'investigate' | 'not-applicable' | 'mitigated';
-export type DfdDirection = 'LR' | 'RL' | 'TB' | 'BT';
+export type DfdDirection = 'LR' | 'RL' | 'TB' | 'BT' | 'auto';
 export type DfdElementType = 'external' | 'process' | 'datastore';
 
 export interface DfdElement {
