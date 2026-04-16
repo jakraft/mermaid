@@ -56,6 +56,9 @@ const getStyles: DiagramStylesProvider = () =>
   .dfd-flow text {
     fill: #333333;
     font-size: 12px;
+    stroke: #ffffff;
+    stroke-width: 4px;
+    paint-order: stroke;
   }
   .dfd-flow marker path {
     fill: #333333;

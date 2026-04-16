@@ -294,6 +294,9 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
     .y((d) => d[1])
     .curve(curveBasis);
 
+  // Collect label data for a second pass (rendered on top)
+  const flowLabels: { x: number; y: number; text: string; description?: string }[] = [];
+
   for (const flow of flows) {
     const edgeName = flow.id ?? `flow-${flow.index}`;
     const edgeObj = graph.edge({ v: flow.source, w: flow.target, name: edgeName });
@@ -317,21 +320,16 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
       .attr('fill', 'none')
       .attr('marker-end', `url(#${id}-arrowhead)`);
 
-    // Flow description tooltip
-    if (flow.description) {
-      flowGroup.append('title').text(flow.description);
-    }
-
-    // Flow label at the midpoint of the edge
+    // Collect label for top-layer rendering
     const midIdx = Math.floor(edgeObj.points.length / 2);
     const midPoint = edgeObj.points[midIdx];
     const displayLabel = flow.numberLabel ? `${flow.numberLabel}. ${flow.label}` : flow.label;
-    flowGroup
-      .append('text')
-      .attr('x', midPoint.x)
-      .attr('y', midPoint.y - 8)
-      .attr('text-anchor', 'middle')
-      .text(displayLabel);
+    flowLabels.push({
+      x: midPoint.x,
+      y: midPoint.y - 8,
+      text: displayLabel,
+      description: flow.description,
+    });
 
     // Draw threat badges on flows
     const flowThreats = threats.filter((t) => t.targetId === flow.id);
@@ -366,6 +364,21 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
           .text(String(threat.number));
       }
     }
+  }
+
+  // Render flow labels in a top-layer group so they're always above other elements
+  const flowLabelLayer = diagramGroup.append('g').attr('class', 'dfd-flow-labels');
+  for (const label of flowLabels) {
+    const labelGroup = flowLabelLayer.append('g').attr('class', 'dfd-flow');
+    if (label.description) {
+      labelGroup.append('title').text(label.description);
+    }
+    labelGroup
+      .append('text')
+      .attr('x', label.x)
+      .attr('y', label.y)
+      .attr('text-anchor', 'middle')
+      .text(label.text);
   }
 
   // Compute graph bounds and width first
