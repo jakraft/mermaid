@@ -71,14 +71,15 @@ title My System
 direction LR
 ```
 
-Supported directions:
+By default, the layout engine automatically picks the best direction by comparing left-to-right and top-to-bottom layouts and choosing whichever produces shorter, cleaner edges. You can override this with an explicit `direction` keyword:
 
-| Value | Description   |
-| ----- | ------------- |
-| `LR`  | Left to right |
-| `RL`  | Right to left |
-| `TB`  | Top to bottom |
-| `BT`  | Bottom to top |
+| Value       | Description                          |
+| ----------- | ------------------------------------ |
+| _(omitted)_ | Auto-detect best direction (default) |
+| `LR`        | Left to right                        |
+| `RL`        | Right to left                        |
+| `TB`        | Top to bottom                        |
+| `BT`        | Bottom to top                        |
 
 ### Elements
 
@@ -441,7 +442,7 @@ dfd-beta showThreats autonumber
 | ---------------- | ------------------------------------------------------------------------ |
 | Declaration      | `dfd-beta [showThreats] [autonumber]`                                    |
 | Title            | `title My Diagram`                                                       |
-| Direction        | `direction LR\|RL\|TB\|BT`                                               |
+| Direction        | `direction LR\|RL\|TB\|BT` (optional; auto-detects if omitted)           |
 | External entity  | `external id "label"`                                                    |
 | Process          | `process id "label"`                                                     |
 | Data store       | `datastore id "label"`                                                   |
