@@ -9,7 +9,7 @@ import { layout as dagreLayout } from 'dagre-d3-es/src/dagre/index.js';
 import * as graphlib from 'dagre-d3-es/src/graphlib/index.js';
 import type { DfdDB } from './db.js';
 import type { DfdElement } from './types.js';
-import { STRIDE_COLORS, STRIDE_NAMES } from './types.js';
+import { STRIDE_COLORS, STRIDE_EMOJIS, STRIDE_NAMES } from './types.js';
 
 // Layout constants
 const ELEMENT_WIDTH = 160;
@@ -428,7 +428,7 @@ export const draw: DrawDefinition = (text, id, _version, diagObj) => {
         .append('span')
         .attr('class', 'threat-category-badge')
         .attr('style', `background-color: ${STRIDE_COLORS[threat.category]}`)
-        .text(STRIDE_NAMES[threat.category]);
+        .text(`${STRIDE_EMOJIS[threat.category]} ${STRIDE_NAMES[threat.category]}`);
       threatTd.append('span').text(` ${threat.description}`);
       row
         .append('td')

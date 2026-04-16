@@ -72,3 +72,15 @@ export const STRIDE_NAMES: Record<StrideCategory, string> = {
   D: 'Denial of Service',
   E: 'Elevation of Privilege',
 };
+
+/**
+ * Emoji icons for STRIDE categories.
+ */
+export const STRIDE_EMOJIS: Record<StrideCategory, string> = {
+  S: '🎭',
+  T: '🔧',
+  R: '🙈',
+  I: '🔓',
+  D: '🚫',
+  E: '⬆️',
+};
