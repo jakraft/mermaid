@@ -184,6 +184,13 @@ union A, B`,
     tf 02 evt End
     rf 03 readmodel ReadModel01 ->> 01 ->> 02 { a: true }
     rf 04 rmo ReadModel02 ->> 01 ->> 02`,
+
+  dfd: `dfd-beta
+    external user "User"
+    process web "Web Server"
+    datastore db "Database"
+    user -- "request" --> web
+    web -- "query" --> db`,
 };
 
 async function renderTwoAndCheckIds(
