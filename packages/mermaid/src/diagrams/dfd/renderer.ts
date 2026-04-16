@@ -18,6 +18,7 @@ const BADGE_GAP = 3;
 const ARROW_HEAD_SIZE = 8;
 const TITLE_HEIGHT = 40;
 const LABEL_HEIGHT = 14;
+const ARROW_APPROACH_MIN = 20; // minimum straight-line distance into the endpoint
 
 /** Map DFD direction to ELK direction */
 function toElkDirection(dir: string): string {
@@ -31,6 +32,41 @@ function toElkDirection(dir: string): string {
     default:
       return 'DOWN';
   }
+}
+
+/**
+ * Clean up edge points so the arrow tip has a straight approach.
+ * Removes bend points that are too close to the endpoint, which cause
+ * curveBasis to create tight turns right at the arrowhead.
+ */
+function cleanArrowApproach(points: [number, number][]): [number, number][] {
+  if (points.length <= 2) {
+    return points;
+  }
+  // Remove bend points too close to the end (work backwards)
+  const end = points[points.length - 1];
+  const trimmed = [...points];
+  while (trimmed.length > 2) {
+    const prev = trimmed[trimmed.length - 2];
+    const dist = Math.sqrt((prev[0] - end[0]) ** 2 + (prev[1] - end[1]) ** 2);
+    if (dist < ARROW_APPROACH_MIN) {
+      trimmed.splice(-2, 1);
+    } else {
+      break;
+    }
+  }
+  // Same for start point
+  const start = trimmed[0];
+  while (trimmed.length > 2) {
+    const next = trimmed[1];
+    const dist = Math.sqrt((next[0] - start[0]) ** 2 + (next[1] - start[1]) ** 2);
+    if (dist < ARROW_APPROACH_MIN) {
+      trimmed.splice(1, 1);
+    } else {
+      break;
+    }
+  }
+  return trimmed;
 }
 
 interface ElkNode {
@@ -534,11 +570,12 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       continue;
     }
 
-    const points: [number, number][] = [
+    const rawPoints: [number, number][] = [
       [section.startPoint.x, section.startPoint.y],
       ...(section.bendPoints?.map((p) => [p.x, p.y] as [number, number]) ?? []),
       [section.endPoint.x, section.endPoint.y],
     ];
+    const points = cleanArrowApproach(rawPoints);
 
     const flowGroup = diagramGroup
       .append('g')
