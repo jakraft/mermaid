@@ -126,7 +126,7 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       children,
       labels: [{ text: boundary.label }],
       layoutOptions: {
-        'elk.padding': '[top=35,left=15,bottom=15,right=15]',
+        'elk.padding': '[top=40,left=20,bottom=20,right=20]',
       },
     };
   }
@@ -166,12 +166,24 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       'elk.algorithm': 'layered',
       'elk.direction': toElkDirection(direction),
       'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-      'spacing.baseValue': '40',
-      'elk.layered.mergeHierarchyEdges': 'true',
       'elk.padding': `[top=${TITLE_HEIGHT + BOUNDARY_PAD},left=${BOUNDARY_PAD},bottom=${BOUNDARY_PAD},right=${BOUNDARY_PAD}]`,
+      // Node spacing
       'spacing.nodeNode': '60',
-      'spacing.nodeNodeBetweenLayers': '80',
+      'spacing.nodeNodeBetweenLayers': '100',
+      // Edge spacing — room for flow labels between parallel edges
+      'spacing.edgeEdge': '25',
+      'spacing.edgeEdgeBetweenLayers': '30',
+      'spacing.edgeNode': '30',
+      'spacing.edgeNodeBetweenLayers': '25',
+      'spacing.nodeSelfLoop': '40',
+      // Edge routing
       'elk.layered.unnecessaryBendpoints': 'true',
+      'elk.layered.mergeHierarchyEdges': 'true',
+      'elk.layered.edgeRouting.selfLoopDistribution': 'EQUALLY',
+      // Node ordering — respect declaration order for predictable layouts
+      'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+      'elk.layered.cycleBreaking.strategy': 'GREEDY_MODEL_ORDER',
+      'nodePlacement.strategy': 'BRANDES_KOEPF',
     },
     children: rootChildren,
     edges: elkEdges,
@@ -394,7 +406,12 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
   // Collect label data for a second pass (rendered on top)
   const flowLabels: { x: number; y: number; text: string; description?: string }[] = [];
 
-  // Build edge lookup from ELK result (edges live on the root or inside subgraphs)
+  // Build edge lookup from ELK result.
+  // With INCLUDE_CHILDREN, all edges stay in the root edges array but ELK sets
+  // a `container` property indicating which graph element's coordinate system
+  // the edge section coordinates are relative to. We use the already-computed
+  // nodePositions (which store the top-left absolute position of each boundary)
+  // to translate edge coordinates to absolute.
   const edgeSections = new Map<
     string,
     {
@@ -404,39 +421,41 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
     }
   >();
 
-  function collectEdgeSections(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    graph: any,
-    offsetX: number,
-    offsetY: number
-  ): void {
-    if (graph.edges) {
-      for (const edge of graph.edges) {
-        if (edge.sections?.[0]) {
-          const s = edge.sections[0];
-          edgeSections.set(edge.id, {
-            startPoint: { x: s.startPoint.x + offsetX, y: s.startPoint.y + offsetY },
-            endPoint: { x: s.endPoint.x + offsetX, y: s.endPoint.y + offsetY },
-            bendPoints: s.bendPoints?.map((p: { x: number; y: number }) => ({
-              x: p.x + offsetX,
-              y: p.y + offsetY,
-            })),
-          });
-        }
-      }
-    }
+  // Build a map of boundary absolute top-left positions for container offset lookup
+  const containerOffsets = new Map<string, { x: number; y: number }>();
+  containerOffsets.set('root', { x: 0, y: 0 });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function collectContainerOffsets(graph: any, parentX: number, parentY: number): void {
     if (graph.children) {
       for (const child of graph.children) {
-        if (child.children || child.edges) {
-          const childX = (child.x ?? 0) + offsetX;
-          const childY = (child.y ?? 0) + offsetY;
-          collectEdgeSections(child, childX, childY);
+        const absX = parentX + (child.x ?? 0);
+        const absY = parentY + (child.y ?? 0);
+        containerOffsets.set(child.id, { x: absX, y: absY });
+        if (child.children) {
+          collectContainerOffsets(child, absX, absY);
         }
       }
     }
   }
+  collectContainerOffsets(layoutResult, 0, 0);
 
-  collectEdgeSections(layoutResult, 0, 0);
+  if (layoutResult.edges) {
+    for (const edge of layoutResult.edges) {
+      if (edge.sections?.[0]) {
+        const s = edge.sections[0];
+        const containerId = edge.container ?? 'root';
+        const offset = containerOffsets.get(containerId) ?? { x: 0, y: 0 };
+        edgeSections.set(edge.id, {
+          startPoint: { x: s.startPoint.x + offset.x, y: s.startPoint.y + offset.y },
+          endPoint: { x: s.endPoint.x + offset.x, y: s.endPoint.y + offset.y },
+          bendPoints: s.bendPoints?.map((p: { x: number; y: number }) => ({
+            x: p.x + offset.x,
+            y: p.y + offset.y,
+          })),
+        });
+      }
+    }
+  }
 
   for (const flow of flows) {
     const edgeName = flow.id ?? `flow-${flow.index}`;
