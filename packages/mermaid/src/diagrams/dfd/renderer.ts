@@ -2,7 +2,7 @@ import type { DrawDefinition, SVG } from '../../diagram-api/types.js';
 import { log } from '../../logger.js';
 import { selectSvgElement } from '../../rendering-util/selectSvgElement.js';
 import { configureSvgSize } from '../../setupGraphViewbox.js';
-import { line, curveBasis } from 'd3';
+import { line, curveBundle } from 'd3';
 import ELK from 'elkjs/lib/elk.bundled.js';
 
 import type { DfdDB } from './db.js';
@@ -18,7 +18,6 @@ const BADGE_GAP = 3;
 const ARROW_HEAD_SIZE = 8;
 const TITLE_HEIGHT = 40;
 const LABEL_HEIGHT = 14;
-const ARROW_APPROACH_MIN = 20; // minimum straight-line distance into the endpoint
 
 /** Map DFD direction to ELK direction */
 function toElkDirection(dir: string): string {
@@ -32,41 +31,6 @@ function toElkDirection(dir: string): string {
     default:
       return 'DOWN';
   }
-}
-
-/**
- * Clean up edge points so the arrow tip has a straight approach.
- * Removes bend points that are too close to the endpoint, which cause
- * curveBasis to create tight turns right at the arrowhead.
- */
-function cleanArrowApproach(points: [number, number][]): [number, number][] {
-  if (points.length <= 2) {
-    return points;
-  }
-  // Remove bend points too close to the end (work backwards)
-  const end = points[points.length - 1];
-  const trimmed = [...points];
-  while (trimmed.length > 2) {
-    const prev = trimmed[trimmed.length - 2];
-    const dist = Math.sqrt((prev[0] - end[0]) ** 2 + (prev[1] - end[1]) ** 2);
-    if (dist < ARROW_APPROACH_MIN) {
-      trimmed.splice(-2, 1);
-    } else {
-      break;
-    }
-  }
-  // Same for start point
-  const start = trimmed[0];
-  while (trimmed.length > 2) {
-    const next = trimmed[1];
-    const dist = Math.sqrt((next[0] - start[0]) ** 2 + (next[1] - start[1]) ** 2);
-    if (dist < ARROW_APPROACH_MIN) {
-      trimmed.splice(1, 1);
-    } else {
-      break;
-    }
-  }
-  return trimmed;
 }
 
 interface ElkNode {
@@ -117,14 +81,18 @@ const ELK_BASE_OPTIONS: Record<string, string> = {
   'spacing.edgeNode': '30',
   'spacing.edgeNodeBetweenLayers': '25',
   'spacing.nodeSelfLoop': '40',
-  // Edge routing — splines produce smooth curves for backward edges
-  'elk.layered.edgeRouting': 'SPLINES',
+  // Edge routing — polyline produces clean straight segments with sharp bends
+  'elk.layered.edgeRouting': 'POLYLINE',
   'elk.layered.edgeRouting.selfLoopDistribution': 'EQUALLY',
   'elk.layered.mergeHierarchyEdges': 'true',
   // Node placement — NETWORK_SIMPLEX minimizes total edge length
   'nodePlacement.strategy': 'NETWORK_SIMPLEX',
   // Node ordering — respect declaration order for predictable layouts
   'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+  // Allow edges to connect to any side of a node for shorter paths
+  'elk.portConstraints': 'FREE',
+  // Let ELK position edge labels
+  'elk.edgeLabels.placement': 'CENTER',
 };
 
 /** Compute total edge path length for a laid-out graph (used for auto-direction) */
@@ -253,12 +221,15 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
     }
   }
 
-  // Build edges with labels so ELK can space them properly
+  // Build edges — pass label text with minimal dimensions so ELK positions labels
+  // without reserving large spacing gaps
   const elkEdges: ElkEdge[] = flows.map((flow) => {
+    const displayLabel = flow.numberLabel ? `${flow.numberLabel}. ${flow.label}` : flow.label;
     return {
       id: flow.id ?? `flow-${flow.index}`,
       sources: [flow.source],
       targets: [flow.target],
+      labels: [{ text: displayLabel, width: 1, height: 1 }],
     };
   });
 
@@ -507,7 +478,7 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
   const curvedLine = line<[number, number]>()
     .x((d) => d[0])
     .y((d) => d[1])
-    .curve(curveBasis);
+    .curve(curveBundle.beta(0.85));
 
   // Collect label data for a second pass (rendered on top)
   const flowLabels: { x: number; y: number; text: string; description?: string }[] = [];
@@ -522,6 +493,7 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       startPoint: { x: number; y: number };
       endPoint: { x: number; y: number };
       bendPoints?: { x: number; y: number }[];
+      labelPos?: { x: number; y: number };
     }
   >();
 
@@ -550,6 +522,15 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
         const containerId = edge.container ?? 'root';
         const offset = containerOffsets.get(containerId) ?? { x: 0, y: 0 };
 
+        // Extract ELK-positioned label if available
+        let labelPos: { x: number; y: number } | undefined;
+        if (edge.labels?.[0]?.x !== undefined) {
+          labelPos = {
+            x: edge.labels[0].x + offset.x,
+            y: edge.labels[0].y + offset.y,
+          };
+        }
+
         edgeSections.set(edge.id, {
           startPoint: { x: s.startPoint.x + offset.x, y: s.startPoint.y + offset.y },
           endPoint: { x: s.endPoint.x + offset.x, y: s.endPoint.y + offset.y },
@@ -557,6 +538,7 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
             x: p.x + offset.x,
             y: p.y + offset.y,
           })),
+          labelPos,
         });
       }
     }
@@ -570,12 +552,11 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       continue;
     }
 
-    const rawPoints: [number, number][] = [
+    const points: [number, number][] = [
       [section.startPoint.x, section.startPoint.y],
       ...(section.bendPoints?.map((p) => [p.x, p.y] as [number, number]) ?? []),
       [section.endPoint.x, section.endPoint.y],
     ];
-    const points = cleanArrowApproach(rawPoints);
 
     const flowGroup = diagramGroup
       .append('g')
@@ -588,21 +569,42 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       .attr('fill', 'none')
       .attr('marker-end', `url(#${id}-arrowhead)`);
 
-    // Place label at path midpoint
+    // Use ELK-positioned label if available, otherwise fall back to path midpoint
     const displayLabel = flow.numberLabel ? `${flow.numberLabel}. ${flow.label}` : flow.label;
-    const pathMid = pathMidpoint(points);
-    flowLabels.push({
-      x: pathMid[0],
-      y: pathMid[1] - 8,
-      text: displayLabel,
-      description: flow.description,
-    });
+    if (section.labelPos) {
+      flowLabels.push({
+        x: section.labelPos.x,
+        y: section.labelPos.y,
+        text: displayLabel,
+        description: flow.description,
+      });
+    } else {
+      const pathMid = pathMidpoint(points);
+      flowLabels.push({
+        x: pathMid[0],
+        y: pathMid[1] - 8,
+        text: displayLabel,
+        description: flow.description,
+      });
+    }
+
+    // Determine label anchor point for badges
+    let labelAnchorX: number;
+    let labelAnchorY: number;
+    if (section.labelPos) {
+      labelAnchorX = section.labelPos.x;
+      labelAnchorY = section.labelPos.y;
+    } else {
+      const mid = pathMidpoint(points);
+      labelAnchorX = mid[0];
+      labelAnchorY = mid[1];
+    }
 
     // Draw threat badges on flows
     const flowThreats = threats.filter((t) => t.targetId === flow.id);
     if (flowThreats.length > 0) {
-      const badgeStartX = pathMid[0] - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
-      const badgeY = pathMid[1] + LABEL_HEIGHT + 2;
+      const badgeStartX = labelAnchorX - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
+      const badgeY = labelAnchorY + LABEL_HEIGHT + 2;
 
       for (const [i, threat] of flowThreats.entries()) {
         const isFaded = threat.status === 'mitigated' || threat.status === 'not-applicable';
