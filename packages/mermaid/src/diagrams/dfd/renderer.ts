@@ -2,11 +2,13 @@ import type { DrawDefinition, SVG } from '../../diagram-api/types.js';
 import { log } from '../../logger.js';
 import { selectSvgElement } from '../../rendering-util/selectSvgElement.js';
 import { configureSvgSize } from '../../setupGraphViewbox.js';
-import { line, curveLinear } from 'd3';
-import ELK from 'elkjs/lib/elk.bundled.js';
+import { line, curveBasis } from 'd3';
 
+import { layout as dagreLayout } from 'dagre-d3-es/src/dagre/index.js';
+
+import * as graphlib from 'dagre-d3-es/src/graphlib/index.js';
 import type { DfdDB } from './db.js';
-import type { DfdTrustBoundary } from './types.js';
+import type { DfdElement } from './types.js';
 import { STRIDE_COLORS, STRIDE_EMOJIS, STRIDE_NAMES } from './types.js';
 
 // Layout constants
@@ -17,129 +19,25 @@ const BADGE_SIZE = 16;
 const BADGE_GAP = 3;
 const ARROW_HEAD_SIZE = 8;
 const TITLE_HEIGHT = 40;
-const LABEL_HEIGHT = 14;
 
-/** Map DFD direction to ELK direction */
-function toElkDirection(dir: string): string {
+/** Map DFD direction to dagre rankdir */
+function toRankdir(dir: string): string {
   switch (dir) {
     case 'LR':
-      return 'RIGHT';
+      return 'LR';
     case 'RL':
-      return 'LEFT';
+      return 'RL';
     case 'BT':
-      return 'UP';
+      return 'BT';
     default:
-      return 'DOWN';
+      return 'TB';
   }
-}
-
-interface ElkNode {
-  id: string;
-  width: number;
-  height: number;
-  children?: ElkNode[];
-  labels?: { text: string }[];
-  layoutOptions?: Record<string, unknown>;
-  // Populated after layout
-  x?: number;
-  y?: number;
-}
-
-interface ElkEdge {
-  id: string;
-  sources: string[];
-  targets: string[];
-  labels?: { text: string; width: number; height: number; x?: number; y?: number }[];
-  layoutOptions?: Record<string, unknown>;
-  // Populated after layout
-  sections?: {
-    startPoint: { x: number; y: number };
-    endPoint: { x: number; y: number };
-    bendPoints?: { x: number; y: number }[];
-  }[];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  container?: any;
-}
-
-interface ElkGraph {
-  id: string;
-  layoutOptions: Record<string, unknown>;
-  children: ElkNode[];
-  edges: ElkEdge[];
-}
-
-/** Shared ELK layout options (direction-independent) */
-const ELK_BASE_OPTIONS: Record<string, string> = {
-  'elk.algorithm': 'layered',
-  'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-  // Node spacing
-  'spacing.nodeNode': '60',
-  'spacing.nodeNodeBetweenLayers': '100',
-  // Edge spacing
-  'spacing.edgeEdge': '25',
-  'spacing.edgeEdgeBetweenLayers': '25',
-  'spacing.edgeNode': '30',
-  'spacing.edgeNodeBetweenLayers': '25',
-  'spacing.nodeSelfLoop': '40',
-  // Edge routing — polyline produces clean straight segments with sharp bends
-  'elk.layered.edgeRouting': 'POLYLINE',
-  'elk.layered.edgeRouting.selfLoopDistribution': 'EQUALLY',
-  'elk.layered.mergeHierarchyEdges': 'true',
-  // Node placement — NETWORK_SIMPLEX minimizes total edge length
-  'nodePlacement.strategy': 'NETWORK_SIMPLEX',
-  // Node ordering — respect declaration order for predictable layouts
-  'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
-  // Allow edges to connect to any side of a node for shorter paths
-  'elk.portConstraints': 'FREE',
-  // Let ELK position edge labels
-  'elk.edgeLabels.placement': 'CENTER',
-};
-
-/** Compute total edge path length for a laid-out graph (used for auto-direction) */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function computeTotalEdgeLength(result: any): number {
-  const offsets = new Map<string, { x: number; y: number }>();
-  offsets.set('root', { x: 0, y: 0 });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function buildOffsets(nodes: any[], px: number, py: number): void {
-    for (const n of nodes) {
-      const ax = px + (n.x ?? 0);
-      const ay = py + (n.y ?? 0);
-      offsets.set(n.id, { x: ax, y: ay });
-      if (n.children) {
-        buildOffsets(n.children, ax, ay);
-      }
-    }
-  }
-  if (result.children) {
-    buildOffsets(result.children, 0, 0);
-  }
-  let total = 0;
-  for (const edge of result.edges ?? []) {
-    if (edge.sections?.[0]) {
-      const s = edge.sections[0];
-      const c = edge.container ?? 'root';
-      const off = offsets.get(c) ?? { x: 0, y: 0 };
-      const pts = [
-        { x: s.startPoint.x + off.x, y: s.startPoint.y + off.y },
-        ...(s.bendPoints ?? []).map((p: { x: number; y: number }) => ({
-          x: p.x + off.x,
-          y: p.y + off.y,
-        })),
-        { x: s.endPoint.x + off.x, y: s.endPoint.y + off.y },
-      ];
-      for (let i = 1; i < pts.length; i++) {
-        total += Math.sqrt((pts[i].x - pts[i - 1].x) ** 2 + (pts[i].y - pts[i - 1].y) ** 2);
-      }
-    }
-  }
-  return total;
 }
 
 /**
- * Draw the DFD diagram using ELK for automatic layout.
+ * Draw the DFD diagram using dagre for automatic layout.
  */
-export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
+export const draw: DrawDefinition = (text, id, _version, diagObj) => {
   log.debug('rendering dfd diagram\n' + text);
   const db = diagObj.db as DfdDB;
   const svg: SVG = selectSvgElement(id);
@@ -152,153 +50,61 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
   const showThreats = db.getShowThreats();
   const title = db.getDiagramTitle();
 
-  // Pre-compute element widths accounting for badges
-  const NODE_LABEL_CHAR_WIDTH = 8;
-  const LABEL_PAD = 20;
-  const BADGE_LABEL_GAP = 8;
+  // Build dagre graph
+  const graph = new graphlib.Graph({ multigraph: true, compound: true }).setGraph({
+    rankdir: toRankdir(direction),
+    nodesep: 60,
+    ranksep: 80,
+    marginx: BOUNDARY_PAD,
+    marginy: TITLE_HEIGHT + BOUNDARY_PAD,
+  });
+  graph.setDefaultEdgeLabel(() => ({}));
 
-  function computeNodeWidth(elId: string, label: string): number {
+  // Add boundary nodes as compound parents
+  for (const [bId, boundary] of boundaries) {
+    graph.setNode(bId, {
+      label: boundary.label,
+      clusterLabelPos: 'top',
+      width: 0,
+      height: 0,
+    });
+    if (boundary.parentBoundaryId) {
+      graph.setParent(bId, boundary.parentBoundaryId);
+    }
+  }
+
+  // Pre-compute element widths accounting for badges to the right of the label
+  const LABEL_CHAR_WIDTH = 8; // approximate width per character
+  const LABEL_PAD = 20; // padding around label text
+  const BADGE_LABEL_GAP = 8; // gap between label and first badge
+
+  // Add element nodes — width includes label + badges
+  for (const [elId, el] of elements) {
     const elementThreats = threats.filter((t) => t.targetId === elId);
-    const labelWidth = label.length * NODE_LABEL_CHAR_WIDTH;
+    const labelWidth = el.label.length * LABEL_CHAR_WIDTH;
     const badgesWidth =
       elementThreats.length > 0
         ? BADGE_LABEL_GAP + elementThreats.length * (BADGE_SIZE + BADGE_GAP) - BADGE_GAP
         : 0;
-    return Math.max(ELEMENT_WIDTH, labelWidth + badgesWidth + LABEL_PAD);
-  }
-
-  // Build ELK graph with hierarchical structure
-  function buildBoundaryChildren(boundaryId: string, boundary: DfdTrustBoundary): ElkNode {
-    const children: ElkNode[] = [];
-
-    for (const [elId, el] of elements) {
-      if (el.boundaryId === boundaryId) {
-        children.push({
-          id: elId,
-          width: computeNodeWidth(elId, el.label),
-          height: ELEMENT_HEIGHT,
-          labels: [{ text: el.label }],
-        });
-      }
-    }
-
-    for (const childBId of boundary.childBoundaryIds) {
-      const childBoundary = boundaries.get(childBId);
-      if (childBoundary) {
-        children.push(buildBoundaryChildren(childBId, childBoundary));
-      }
-    }
-
-    return {
-      id: boundaryId,
-      width: 0,
-      height: 0,
-      children,
-      labels: [{ text: boundary.label }],
-      layoutOptions: {
-        'elk.padding': '[top=40,left=20,bottom=20,right=20]',
-      },
-    };
-  }
-
-  // Build the root children array
-  const rootChildren: ElkNode[] = [];
-
-  for (const [bId, boundary] of boundaries) {
-    if (!boundary.parentBoundaryId) {
-      rootChildren.push(buildBoundaryChildren(bId, boundary));
+    const nodeWidth = Math.max(ELEMENT_WIDTH, labelWidth + badgesWidth + LABEL_PAD);
+    graph.setNode(elId, {
+      label: el.label,
+      width: nodeWidth,
+      height: ELEMENT_HEIGHT,
+    });
+    if (el.boundaryId) {
+      graph.setParent(elId, el.boundaryId);
     }
   }
 
-  for (const [elId, el] of elements) {
-    if (!el.boundaryId) {
-      rootChildren.push({
-        id: elId,
-        width: computeNodeWidth(elId, el.label),
-        height: ELEMENT_HEIGHT,
-        labels: [{ text: el.label }],
-      });
-    }
+  // Add edges (flows) — use multigraph edge names for parallel edges
+  for (const flow of flows) {
+    const edgeName = flow.id ?? `flow-${flow.index}`;
+    graph.setEdge(flow.source, flow.target, { label: flow.label, flowIndex: flow.index }, edgeName);
   }
 
-  // Build edges — pass label text with minimal dimensions so ELK positions labels
-  // without reserving large spacing gaps
-  const elkEdges: ElkEdge[] = flows.map((flow) => {
-    const displayLabel = flow.numberLabel ? `${flow.numberLabel}. ${flow.label}` : flow.label;
-    return {
-      id: flow.id ?? `flow-${flow.index}`,
-      sources: [flow.source],
-      targets: [flow.target],
-      labels: [{ text: displayLabel, width: 1, height: 1 }],
-    };
-  });
-
-  // Build the ELK graph (direction filled in below)
-  function buildElkGraph(elkDirection: string): ElkGraph {
-    return {
-      id: 'root',
-      layoutOptions: {
-        ...ELK_BASE_OPTIONS,
-        'elk.direction': elkDirection,
-        'elk.padding': `[top=${TITLE_HEIGHT + BOUNDARY_PAD},left=${BOUNDARY_PAD},bottom=${BOUNDARY_PAD},right=${BOUNDARY_PAD}]`,
-      },
-      children: JSON.parse(JSON.stringify(rootChildren)),
-      edges: JSON.parse(JSON.stringify(elkEdges)),
-    };
-  }
-
-  // Run ELK layout — auto-detect best direction if not specified
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const elk = new (ELK as any)();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let layoutResult: any;
-
-  if (direction === 'auto') {
-    // Try both horizontal and vertical, pick the one with shorter total edge length
-    const [resultRight, resultDown] = await Promise.all([
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      elk.layout(buildElkGraph('RIGHT') as any),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      elk.layout(buildElkGraph('DOWN') as any),
-    ]);
-    const lenRight = computeTotalEdgeLength(resultRight);
-    const lenDown = computeTotalEdgeLength(resultDown);
-    layoutResult = lenDown <= lenRight ? resultDown : resultRight;
-    log.debug(
-      `Auto-direction: RIGHT=${Math.round(lenRight)} DOWN=${Math.round(lenDown)} → ${lenDown <= lenRight ? 'DOWN' : 'RIGHT'}`
-    );
-  } else {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    layoutResult = await elk.layout(buildElkGraph(toElkDirection(direction)) as any);
-  }
-
-  // Build a lookup of positioned nodes (flatten hierarchy)
-  const nodePositions = new Map<string, { x: number; y: number; width: number; height: number }>();
-
-  function collectNodePositions(
-    nodes: ElkNode[] | undefined,
-    offsetX: number,
-    offsetY: number
-  ): void {
-    if (!nodes) {
-      return;
-    }
-    for (const node of nodes) {
-      const absX = (node.x ?? 0) + offsetX;
-      const absY = (node.y ?? 0) + offsetY;
-      nodePositions.set(node.id, {
-        x: absX,
-        y: absY,
-        width: node.width,
-        height: node.height,
-      });
-      if (node.children) {
-        collectNodePositions(node.children, absX, absY);
-      }
-    }
-  }
-
-  collectNodePositions(layoutResult.children as ElkNode[], 0, 0);
+  // Run dagre layout
+  dagreLayout(graph, undefined);
 
   // Define arrow markers
   const defs = svg.append('defs');
@@ -322,40 +128,41 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
     diagramGroup.append('text').attr('class', 'dfd-title').attr('x', 0).attr('y', 25).text(title);
   }
 
-  // Draw boundaries
+  // Draw boundaries — dagre sets x/y/width/height on compound nodes
   for (const [bId, boundary] of boundaries) {
-    const pos = nodePositions.get(bId);
-    if (!pos) {
+    const bNode = graph.node(bId);
+    if (!bNode) {
       continue;
     }
+    // dagre gives center-based coords for compound nodes
+    const bx = bNode.x - bNode.width / 2;
+    const by = bNode.y - bNode.height / 2;
 
     const group = diagramGroup.append('g').attr('class', 'dfd-boundary');
 
     group
       .append('rect')
-      .attr('x', pos.x)
-      .attr('y', pos.y)
-      .attr('width', pos.width)
-      .attr('height', pos.height)
+      .attr('x', bx)
+      .attr('y', by)
+      .attr('width', bNode.width)
+      .attr('height', bNode.height)
       .attr('data-boundary-id', bId);
 
     group
       .append('text')
-      .attr('x', pos.x + 8)
-      .attr('y', pos.y + 16)
+      .attr('x', bx + 8)
+      .attr('y', by + 16)
       .text(boundary.label);
   }
 
-  // Draw elements — ELK gives top-left x/y
+  // Draw elements — dagre gives center-based x/y
   for (const [elId, el] of elements) {
-    const pos = nodePositions.get(elId);
-    if (!pos) {
+    const elNode = graph.node(elId);
+    if (!elNode) {
       continue;
     }
-    const nx = pos.x;
-    const ny = pos.y;
-    const cx = nx + pos.width / 2;
-    const cy = ny + pos.height / 2;
+    const nx = elNode.x - elNode.width / 2;
+    const ny = elNode.y - elNode.height / 2;
 
     const group = diagramGroup
       .append('g')
@@ -367,31 +174,33 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
         .append('rect')
         .attr('x', nx)
         .attr('y', ny)
-        .attr('width', pos.width)
-        .attr('height', pos.height);
+        .attr('width', elNode.width)
+        .attr('height', elNode.height);
     } else if (el.type === 'process') {
       group
         .append('rect')
         .attr('x', nx)
         .attr('y', ny)
-        .attr('width', pos.width)
-        .attr('height', pos.height)
+        .attr('width', elNode.width)
+        .attr('height', elNode.height)
         .attr('rx', 10)
         .attr('ry', 10);
     } else if (el.type === 'datastore') {
-      const ry = 8;
+      const ry = 8; // ellipse vertical radius for cylinder caps
       const topY = ny + ry;
-      const bottomY = ny + pos.height - ry;
-      const halfW = pos.width / 2;
+      const bottomY = ny + elNode.height - ry;
+      const halfW = elNode.width / 2;
 
+      // White fill for the body area (no stroke)
       group
         .append('rect')
         .attr('class', 'ds-body')
         .attr('x', nx)
         .attr('y', topY)
-        .attr('width', pos.width)
+        .attr('width', elNode.width)
         .attr('height', bottomY - topY);
 
+      // Left side line
       group
         .append('line')
         .attr('class', 'ds-side')
@@ -400,50 +209,55 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
         .attr('x2', nx)
         .attr('y2', bottomY);
 
+      // Right side line
       group
         .append('line')
         .attr('class', 'ds-side')
-        .attr('x1', nx + pos.width)
+        .attr('x1', nx + elNode.width)
         .attr('y1', topY)
-        .attr('x2', nx + pos.width)
+        .attr('x2', nx + elNode.width)
         .attr('y2', bottomY);
 
+      // Bottom half-ellipse arc (only the bottom curve)
       group
         .append('path')
         .attr('class', 'ds-bottom-cap')
-        .attr('d', `M ${nx},${bottomY} A ${halfW},${ry} 0 0,0 ${nx + pos.width},${bottomY}`);
+        .attr('d', `M ${nx},${bottomY} A ${halfW},${ry} 0 0,0 ${nx + elNode.width},${bottomY}`);
 
+      // Top ellipse (full)
       group
         .append('ellipse')
         .attr('class', 'ds-top-cap')
-        .attr('cx', cx)
+        .attr('cx', elNode.x)
         .attr('cy', topY)
         .attr('rx', halfW)
         .attr('ry', ry);
     }
 
-    // Element label + threat badges
+    // Element label + threat badges — label left-of-center, badges to its right
     const elementThreats = threats.filter((t) => t.targetId === elId);
     const badgesWidth =
       elementThreats.length > 0
         ? 8 + elementThreats.length * (BADGE_SIZE + BADGE_GAP) - BADGE_GAP
         : 0;
 
+    // Center the label+badges group within the element
+    // For datastores, shift down slightly to account for the top ellipse cap
     const labelYOffset = el.type === 'datastore' ? 4 : 0;
-    const labelX = cx - badgesWidth / 2;
+    const labelX = elNode.x - badgesWidth / 2;
     group
       .append('text')
       .attr('x', labelX)
-      .attr('y', cy + labelYOffset)
+      .attr('y', elNode.y + labelYOffset)
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'central')
       .text(el.label);
 
     // Draw threat badges to the right of the label
     if (elementThreats.length > 0) {
-      const labelHalfWidth = (el.label.length * 8) / 2;
+      const labelHalfWidth = (el.label.length * 8) / 2; // approximate
       const badgeStartX = labelX + labelHalfWidth + 8;
-      const badgeY = cy + labelYOffset - BADGE_SIZE / 2;
+      const badgeY = elNode.y + labelYOffset - BADGE_SIZE / 2;
 
       for (const [i, threat] of elementThreats.entries()) {
         const isFaded = threat.status === 'mitigated' || threat.status === 'not-applicable';
@@ -474,89 +288,26 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
     }
   }
 
-  // Draw flows using ELK edge sections
+  // Draw flows using dagre edge points
   const curvedLine = line<[number, number]>()
     .x((d) => d[0])
     .y((d) => d[1])
-    .curve(curveLinear);
+    .curve(curveBasis);
 
   // Collect label data for a second pass (rendered on top)
   const flowLabels: { x: number; y: number; text: string; description?: string }[] = [];
 
-  // Build edge lookup from ELK result.
-  // With INCLUDE_CHILDREN, all edges stay in the root edges array but ELK sets
-  // a `container` property indicating which graph element's coordinate system
-  // the edge section coordinates are relative to.
-  const edgeSections = new Map<
-    string,
-    {
-      startPoint: { x: number; y: number };
-      endPoint: { x: number; y: number };
-      bendPoints?: { x: number; y: number }[];
-      labelPos?: { x: number; y: number };
-    }
-  >();
-
-  // Build container offset map for translating relative coordinates to absolute
-  const containerOffsets = new Map<string, { x: number; y: number }>();
-  containerOffsets.set('root', { x: 0, y: 0 });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function collectContainerOffsets(graph: any, parentX: number, parentY: number): void {
-    if (graph.children) {
-      for (const child of graph.children) {
-        const absX = parentX + (child.x ?? 0);
-        const absY = parentY + (child.y ?? 0);
-        containerOffsets.set(child.id, { x: absX, y: absY });
-        if (child.children) {
-          collectContainerOffsets(child, absX, absY);
-        }
-      }
-    }
-  }
-  collectContainerOffsets(layoutResult, 0, 0);
-
-  if (layoutResult.edges) {
-    for (const edge of layoutResult.edges) {
-      if (edge.sections?.[0]) {
-        const s = edge.sections[0];
-        const containerId = edge.container ?? 'root';
-        const offset = containerOffsets.get(containerId) ?? { x: 0, y: 0 };
-
-        // Extract ELK-positioned label if available
-        let labelPos: { x: number; y: number } | undefined;
-        if (edge.labels?.[0]?.x !== undefined) {
-          labelPos = {
-            x: edge.labels[0].x + offset.x,
-            y: edge.labels[0].y + offset.y,
-          };
-        }
-
-        edgeSections.set(edge.id, {
-          startPoint: { x: s.startPoint.x + offset.x, y: s.startPoint.y + offset.y },
-          endPoint: { x: s.endPoint.x + offset.x, y: s.endPoint.y + offset.y },
-          bendPoints: s.bendPoints?.map((p: { x: number; y: number }) => ({
-            x: p.x + offset.x,
-            y: p.y + offset.y,
-          })),
-          labelPos,
-        });
-      }
-    }
-  }
-
   for (const flow of flows) {
     const edgeName = flow.id ?? `flow-${flow.index}`;
-    const section = edgeSections.get(edgeName);
-    if (!section) {
-      log.warn(`No edge sections for flow: ${flow.source} -> ${flow.target}`);
+    const edgeObj = graph.edge({ v: flow.source, w: flow.target, name: edgeName });
+    if (!edgeObj?.points) {
+      log.warn(`No edge points for flow: ${flow.source} -> ${flow.target}`);
       continue;
     }
 
-    const points: [number, number][] = [
-      [section.startPoint.x, section.startPoint.y],
-      ...(section.bendPoints?.map((p) => [p.x, p.y] as [number, number]) ?? []),
-      [section.endPoint.x, section.endPoint.y],
-    ];
+    const points: [number, number][] = edgeObj.points.map(
+      (p: { x: number; y: number }) => [p.x, p.y] as [number, number]
+    );
 
     const flowGroup = diagramGroup
       .append('g')
@@ -569,42 +320,22 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       .attr('fill', 'none')
       .attr('marker-end', `url(#${id}-arrowhead)`);
 
-    // Use ELK-positioned label if available, otherwise fall back to path midpoint
+    // Collect label for top-layer rendering
+    const midIdx = Math.floor(edgeObj.points.length / 2);
+    const midPoint = edgeObj.points[midIdx];
     const displayLabel = flow.numberLabel ? `${flow.numberLabel}. ${flow.label}` : flow.label;
-    if (section.labelPos) {
-      flowLabels.push({
-        x: section.labelPos.x,
-        y: section.labelPos.y,
-        text: displayLabel,
-        description: flow.description,
-      });
-    } else {
-      const pathMid = pathMidpoint(points);
-      flowLabels.push({
-        x: pathMid[0],
-        y: pathMid[1] - 8,
-        text: displayLabel,
-        description: flow.description,
-      });
-    }
-
-    // Determine label anchor point for badges
-    let labelAnchorX: number;
-    let labelAnchorY: number;
-    if (section.labelPos) {
-      labelAnchorX = section.labelPos.x;
-      labelAnchorY = section.labelPos.y;
-    } else {
-      const mid = pathMidpoint(points);
-      labelAnchorX = mid[0];
-      labelAnchorY = mid[1];
-    }
+    flowLabels.push({
+      x: midPoint.x,
+      y: midPoint.y - 8,
+      text: displayLabel,
+      description: flow.description,
+    });
 
     // Draw threat badges on flows
     const flowThreats = threats.filter((t) => t.targetId === flow.id);
     if (flowThreats.length > 0) {
-      const badgeStartX = labelAnchorX - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
-      const badgeY = labelAnchorY + LABEL_HEIGHT + 2;
+      const badgeStartX = midPoint.x - (flowThreats.length * (BADGE_SIZE + BADGE_GAP)) / 2;
+      const badgeY = midPoint.y + 4;
 
       for (const [i, threat] of flowThreats.entries()) {
         const isFaded = threat.status === 'mitigated' || threat.status === 'not-applicable';
@@ -650,8 +381,8 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
       .text(label.text);
   }
 
-  // Compute graph bounds from positioned nodes AND edge sections
-  const bounds = getGraphBounds(nodePositions, edgeSections);
+  // Compute graph bounds and width first
+  const bounds = getGraphBounds(graph, elements, boundaries);
   const TABLE_MIN_WIDTH = 1000;
   const hasTable = showThreats && threats.length > 0;
   const totalWidth = Math.max(bounds.maxX + BOUNDARY_PAD, hasTable ? TABLE_MIN_WIDTH : 0, 400);
@@ -741,57 +472,24 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
   configureSvgSize(svg, totalHeight, totalWidth, true);
 };
 
-/** Find the point at the geometric midpoint along a polyline path */
-function pathMidpoint(points: [number, number][]): [number, number] {
-  if (points.length <= 1) {
-    return points[0] ?? [0, 0];
-  }
-  let totalLen = 0;
-  for (let i = 1; i < points.length; i++) {
-    const dx = points[i][0] - points[i - 1][0];
-    const dy = points[i][1] - points[i - 1][1];
-    totalLen += Math.sqrt(dx * dx + dy * dy);
-  }
-  const halfLen = totalLen / 2;
-  let walked = 0;
-  for (let i = 1; i < points.length; i++) {
-    const dx = points[i][0] - points[i - 1][0];
-    const dy = points[i][1] - points[i - 1][1];
-    const segLen = Math.sqrt(dx * dx + dy * dy);
-    if (walked + segLen >= halfLen && segLen > 0) {
-      const t = (halfLen - walked) / segLen;
-      return [points[i - 1][0] + dx * t, points[i - 1][1] + dy * t];
-    }
-    walked += segLen;
-  }
-  return points[points.length - 1];
-}
+/** Compute bounding box from dagre-laid-out graph nodes */
 
-/** Compute bounding box from ELK-positioned nodes AND edge sections */
 function getGraphBounds(
-  nodePositions: Map<string, { x: number; y: number; width: number; height: number }>,
-  edgeSections: Map<
-    string,
-    {
-      startPoint: { x: number; y: number };
-      endPoint: { x: number; y: number };
-      bendPoints?: { x: number; y: number }[];
-    }
-  >
+  graph: any,
+  elements: Map<string, DfdElement>,
+  boundaries: Map<string, unknown>
 ): { maxX: number; maxY: number } {
   let maxX = 0;
   let maxY = 0;
-  // Node bounds
-  for (const pos of nodePositions.values()) {
-    maxX = Math.max(maxX, pos.x + pos.width);
-    maxY = Math.max(maxY, pos.y + pos.height);
-  }
-  // Edge bounds — include all edge points to prevent arrow cutoff
-  for (const section of edgeSections.values()) {
-    const allPoints = [section.startPoint, ...(section.bendPoints ?? []), section.endPoint];
-    for (const p of allPoints) {
-      maxX = Math.max(maxX, p.x);
-      maxY = Math.max(maxY, p.y);
+  for (const nodeId of graph.nodes()) {
+    // Only measure elements and boundaries, not internal dagre artifacts
+    if (!elements.has(nodeId) && !boundaries.has(nodeId)) {
+      continue;
+    }
+    const node = graph.node(nodeId);
+    if (node) {
+      maxX = Math.max(maxX, node.x + node.width / 2);
+      maxY = Math.max(maxY, node.y + node.height / 2);
     }
   }
   return { maxX, maxY };

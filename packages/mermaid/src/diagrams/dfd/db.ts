@@ -26,7 +26,7 @@ let elements = new Map<string, DfdElement>();
 let flows: DfdDataFlow[] = [];
 let boundaries = new Map<string, DfdTrustBoundary>();
 let threats: DfdThreat[] = [];
-let direction: DfdDirection = 'auto';
+let direction: DfdDirection = 'TB';
 let showThreats = false;
 let autonumber = false;
 let threatCounter = 0;
@@ -37,7 +37,7 @@ const clear = (): void => {
   flows = [];
   boundaries = new Map();
   threats = [];
-  direction = 'auto';
+  direction = 'TB';
   showThreats = false;
   autonumber = false;
   threatCounter = 0;
