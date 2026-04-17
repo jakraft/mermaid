@@ -2,7 +2,7 @@ import type { DrawDefinition, SVG } from '../../diagram-api/types.js';
 import { log } from '../../logger.js';
 import { selectSvgElement } from '../../rendering-util/selectSvgElement.js';
 import { configureSvgSize } from '../../setupGraphViewbox.js';
-import { line, curveBundle } from 'd3';
+import { line, curveLinear } from 'd3';
 import ELK from 'elkjs/lib/elk.bundled.js';
 
 import type { DfdDB } from './db.js';
@@ -478,7 +478,7 @@ export const draw: DrawDefinition = async (text, id, _version, diagObj) => {
   const curvedLine = line<[number, number]>()
     .x((d) => d[0])
     .y((d) => d[1])
-    .curve(curveBundle.beta(0.85));
+    .curve(curveLinear);
 
   // Collect label data for a second pass (rendered on top)
   const flowLabels: { x: number; y: number; text: string; description?: string }[] = [];
